@@ -1,0 +1,9 @@
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.keystore
+*.jks
+app-keys/
+!README.md

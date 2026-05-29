@@ -1,0 +1,1012 @@
+"""
+Android APK Builder.
+
+Primary strategy:
+1. Reuse a cached template WebView APK.
+2. Patch package name / app name / version / icon / assets URL.
+3. Rebuild, zipalign, and sign with a per-app keystore (one signing
+   certificate per app_id; generated on first build and reused on every
+   later build of the same app_id so reinstalls are accepted as updates).
+
+Fallback strategy:
+1. Build the minimal WebView shell from source if SDK tools are available.
+2. Cache the result as the template APK.
+3. If all else fails, emit the legacy ZIP fallback package.
+"""
+
+import json
+import os
+import re
+import secrets
+import shutil
+import struct
+import subprocess
+import tempfile
+import zipfile
+import zlib
+from pathlib import Path
+
+from server import config
+
+
+ACTIVITY_JAVA = r"""
+package w;
+import android.Manifest;
+import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
+import android.webkit.URLUtil;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Locale;
+import org.json.JSONObject;
+public class M extends Activity {
+    private static final int REQ_WRITE_STORAGE = 2001;
+    private static final int REQ_LOCATION = 2002;
+    private static final int REQ_MEDIA = 2003;
+    private static final String DESKTOP_USER_AGENT =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    private WebView webView;
+    private AppConfig config;
+    private PendingDownload pendingDownload;
+    private GeolocationPermissions.Callback pendingGeolocationCallback;
+    private String pendingGeolocationOrigin;
+    private PermissionRequest pendingPermissionRequest;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        getWindow().requestFeature(android.view.Window.FEATURE_NO_TITLE);
+        config = loadConfig();
+        webView = new WebView(this);
+        applyImmersiveMode();
+        webView.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleNavigation(request != null && request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+            @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleNavigation(url);
+            }
+        });
+        webView.setWebChromeClient(new AppChromeClient());
+        webView.setDownloadListener(new AppDownloadListener());
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setAllowContentAccess(true);
+        s.setAllowFileAccess(false);
+        s.setJavaScriptCanOpenWindowsAutomatically(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setGeolocationEnabled(true);
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        }
+        String ua = s.getUserAgentString();
+        if (ua != null && !ua.isEmpty()) {
+            s.setUserAgentString(config.desktopMode ? DESKTOP_USER_AGENT : sanitizeUserAgent(ua));
+        }
+        try {
+            CookieManager cm = CookieManager.getInstance();
+            cm.setAcceptCookie(true);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                cm.setAcceptThirdPartyCookies(webView, true);
+            }
+        } catch (Throwable ignored) {}
+        try {
+            String launchUrl = config.url != null && !config.url.isEmpty() ? config.url : "about:blank";
+            webView.loadUrl(launchUrl);
+        } catch (Exception e) { webView.loadUrl("about:blank"); }
+        setContentView(webView);
+        applyImmersiveMode();
+    }
+
+    private String sanitizeUserAgent(String ua) {
+        return ua.replace("; wv", "").replace(" Version/4.0", "");
+    }
+
+    private AppConfig loadConfig() {
+        AppConfig loaded = new AppConfig();
+        try {
+            InputStream input = getAssets().open("webtoapp_config.json");
+            byte[] data = input.readAllBytes();
+            input.close();
+            JSONObject json = new JSONObject(new String(data, StandardCharsets.UTF_8));
+            loaded.url = json.optString("url", "about:blank").trim();
+            loaded.immersiveFullscreen = json.optBoolean("immersive_fullscreen", false);
+            loaded.desktopMode = json.optBoolean("desktop_mode", false);
+        } catch (Throwable ignored) {}
+        return loaded;
+    }
+
+    private void applyImmersiveMode() {
+        if (config == null || !config.immersiveFullscreen) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+            return;
+        }
+        View decor = getWindow().getDecorView();
+        decor.setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+    }
+
+    private boolean handleNavigation(String url) {
+        if (url == null) return false;
+        String trimmed = url.trim();
+        if (trimmed.isEmpty()) return false;
+        String lower = trimmed.toLowerCase(Locale.US);
+        if (
+            lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("about:") ||
+            lower.startsWith("javascript:") ||
+            lower.startsWith("data:") ||
+            lower.startsWith("blob:")
+        ) {
+            return false;
+        }
+        if (lower.startsWith("intent://")) {
+            return openIntentUri(trimmed);
+        }
+        return openExternal(trimmed);
+    }
+
+    private boolean openIntentUri(String url) {
+        try {
+            Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+            String fallback = intent.getStringExtra("browser_fallback_url");
+            intent.removeExtra("browser_fallback_url");
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent.setComponent(null);
+            intent.setSelector(null);
+            try {
+                startActivity(intent);
+                return true;
+            } catch (Throwable ignored) {
+                if (fallback != null && (fallback.startsWith("http://") || fallback.startsWith("https://"))) {
+                    webView.loadUrl(fallback);
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return true;
+    }
+
+    private boolean openExternal(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent.setComponent(null);
+            intent.setSelector(null);
+            startActivity(intent);
+        } catch (Throwable ignored) {}
+        return true;
+    }
+
+    private final class AppChromeClient extends WebChromeClient {
+        @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+            handleGeolocationPermission(origin, callback);
+        }
+
+        @Override public void onPermissionRequest(final PermissionRequest request) {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    handleMediaPermission(request);
+                }
+            });
+        }
+
+        @Override public void onPermissionRequestCanceled(PermissionRequest request) {
+            if (pendingPermissionRequest == request) {
+                pendingPermissionRequest = null;
+            }
+        }
+    }
+
+    private final class AppDownloadListener implements DownloadListener {
+        @Override public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+            PendingDownload download = new PendingDownload();
+            download.url = url;
+            download.userAgent = userAgent;
+            download.contentDisposition = contentDisposition;
+            download.mimeType = mimeType;
+            download.fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+            if (needsLegacyWritePermission()) {
+                pendingDownload = download;
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_WRITE_STORAGE);
+                return;
+            }
+            enqueueDownload(download);
+        }
+    }
+
+    private void enqueueDownload(PendingDownload download) {
+        if (download == null || download.url == null || download.url.trim().isEmpty()) return;
+        try {
+            DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (manager == null) return;
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(download.url));
+            request.setTitle(download.fileName);
+            request.setDescription(download.url);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setMimeType(download.mimeType);
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(true);
+            String cookies = CookieManager.getInstance().getCookie(download.url);
+            if (cookies != null && !cookies.isEmpty()) {
+                request.addRequestHeader("Cookie", cookies);
+            }
+            if (download.userAgent != null && !download.userAgent.isEmpty()) {
+                request.addRequestHeader("User-Agent", download.userAgent);
+            }
+            request.setDestinationInExternalPublicDir(
+                Environment.DIRECTORY_DOWNLOADS,
+                buildDownloadRelativePath(download.fileName)
+            );
+            manager.enqueue(request);
+        } catch (Throwable ignored) {}
+    }
+
+    private String buildDownloadRelativePath(String fileName) {
+        String safeName = sanitizeFileSegment(fileName);
+        return safeName;
+    }
+
+    private String sanitizeFileSegment(String value) {
+        String cleaned = String.valueOf(value == null ? "" : value).replaceAll("[\\\\/:*?\"<>|]+", "_").trim();
+        return cleaned.isEmpty() ? "download.bin" : cleaned;
+    }
+
+    private boolean needsLegacyWritePermission() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+            && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+            && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void handleGeolocationPermission(String origin, GeolocationPermissions.Callback callback) {
+        if (hasAnyPermission(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            callback.invoke(origin, true, false);
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            callback.invoke(origin, true, false);
+            return;
+        }
+        pendingGeolocationOrigin = origin;
+        pendingGeolocationCallback = callback;
+        requestPermissions(
+            new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
+            REQ_LOCATION
+        );
+    }
+
+    private void handleMediaPermission(PermissionRequest request) {
+        if (request == null) return;
+        ArrayList<String> missingPermissions = new ArrayList<String>();
+        for (String resource : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) && !hasPermission(Manifest.permission.CAMERA)) {
+                missingPermissions.add(Manifest.permission.CAMERA);
+            }
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                missingPermissions.add(Manifest.permission.RECORD_AUDIO);
+            }
+        }
+        if (missingPermissions.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            request.grant(request.getResources());
+            return;
+        }
+        pendingPermissionRequest = request;
+        requestPermissions(missingPermissions.toArray(new String[0]), REQ_MEDIA);
+    }
+
+    private boolean hasPermission(String permission) {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+            || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasAnyPermission(String first, String second) {
+        return hasPermission(first) || hasPermission(second);
+    }
+
+    private boolean allGranted(int[] grantResults) {
+        if (grantResults == null || grantResults.length == 0) return false;
+        for (int result : grantResults) {
+            if (result != PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_WRITE_STORAGE) {
+            PendingDownload download = pendingDownload;
+            pendingDownload = null;
+            if (allGranted(grantResults)) {
+                enqueueDownload(download);
+            }
+            return;
+        }
+        if (requestCode == REQ_LOCATION) {
+            GeolocationPermissions.Callback callback = pendingGeolocationCallback;
+            String origin = pendingGeolocationOrigin;
+            pendingGeolocationCallback = null;
+            pendingGeolocationOrigin = null;
+            if (callback != null) {
+                callback.invoke(origin, allGranted(grantResults), false);
+            }
+            return;
+        }
+        if (requestCode == REQ_MEDIA) {
+            PermissionRequest request = pendingPermissionRequest;
+            pendingPermissionRequest = null;
+            if (request != null) {
+                if (allGranted(grantResults)) request.grant(request.getResources());
+                else request.deny();
+            }
+        }
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applyImmersiveMode();
+    }
+
+    @Override public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
+    }
+
+    @Override protected void onDestroy() {
+        pendingDownload = null;
+        pendingGeolocationCallback = null;
+        pendingGeolocationOrigin = null;
+        pendingPermissionRequest = null;
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+
+    private static final class PendingDownload {
+        String url;
+        String userAgent;
+        String contentDisposition;
+        String mimeType;
+        String fileName;
+    }
+
+    private static final class AppConfig {
+        String url = "about:blank";
+        boolean immersiveFullscreen = false;
+        boolean desktopMode = false;
+    }
+}
+"""
+
+MANIFEST_XML = """<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="{pkg}" android:versionCode="{version_code}" android:versionName="{version_name}">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="33"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <application android:label="{name}" android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <activity android:name="w.M" android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+"""
+
+
+class ApkBuilder:
+    TEMPLATE_PACKAGE = "com.webtoapp.template"
+    TEMPLATE_APP_NAME = "WebToApp Template"
+    TEMPLATE_VERSION_CODE = 1
+    TEMPLATE_VERSION_NAME = "1.0"
+    TEMPLATE_REVISION = "2026-05-17-feature-settings-1"
+    # Keystore used only to sign the throwaway base *template* APK. The template
+    # is always re-signed per-app afterwards, so this key never reaches users.
+    TEMPLATE_KEY_ALIAS = "webtoapp"
+    TEMPLATE_APK_NAME = "android-template.apk"
+
+    def __init__(self):
+        self.sdk = self._find_sdk()
+        self.root = Path(__file__).resolve().parents[2]
+        self.certs_dir = self.root / "certs"
+        self.template_dir = self.root / "server" / "engine" / "_android_template"
+        self.android_tools_dir = self.root / "server" / "engine" / "_android_tools"
+        # Per-app signing keystores live here, one keystore per app_id. Kept
+        # private (never publicly served) and out of version control.
+        self.app_keys_dir = Path(config.android_keystore_dir())
+        self.template_dir.mkdir(parents=True, exist_ok=True)
+        self.android_tools_dir.mkdir(parents=True, exist_ok=True)
+        self.certs_dir.mkdir(parents=True, exist_ok=True)
+        self.app_keys_dir.mkdir(parents=True, exist_ok=True)
+
+    def _find_sdk(self):
+        for p in [
+            os.environ.get("ANDROID_HOME"),
+            os.environ.get("ANDROID_SDK_ROOT"),
+            os.path.expanduser("~/Library/Android/sdk"),
+            os.path.expanduser("~/Android/Sdk"),
+        ]:
+            if p and os.path.isdir(p):
+                return p
+        return None
+
+    def _find_tool(self, name):
+        tools = self._find_tools(name)
+        return tools[0] if tools else None
+
+    def _find_tools(self, name):
+        results = []
+        if self.sdk:
+            bt = Path(self.sdk) / "build-tools"
+            if bt.exists():
+                for v in sorted(bt.iterdir(), reverse=True):
+                    f = v / name
+                    if f.exists():
+                        results.append(str(f))
+        path_tool = shutil.which(name)
+        if path_tool and path_tool not in results:
+            results.append(path_tool)
+        return results
+
+    def _find_jar(self):
+        if not self.sdk:
+            return None
+        p = Path(self.sdk) / "platforms"
+        if p.exists():
+            for v in sorted(p.iterdir(), reverse=True):
+                j = v / "android.jar"
+                if j.exists():
+                    return str(j)
+        return None
+
+    def _find_apktool(self):
+        tool = shutil.which("apktool")
+        if tool:
+            return tool
+        jar = self._apktool_jar()
+        if jar and shutil.which("java"):
+            return f"java -jar {self._shell_quote(str(jar))}"
+        return None
+
+    def _apktool_jar(self):
+        jar = self.android_tools_dir / "apktool.jar"
+        return jar if jar.exists() else None
+
+    def _apksigner_jar(self):
+        jar = self.android_tools_dir / "apksigner.jar"
+        return jar if jar.exists() else None
+
+    @property
+    def can_build_apk(self):
+        return self._can_patch_apk() and (self._template_apk_path().exists() or self._can_build_template())
+
+    def _can_patch_apk(self):
+        return all([
+            self._find_apktool(),
+            shutil.which("keytool"),
+            shutil.which("java"),
+            self._find_tool("apksigner") or self._apksigner_jar(),
+        ])
+
+    def _can_build_template(self):
+        return all([
+            self.sdk,
+            self._find_tool("aapt2"),
+            self._find_tool("d8"),
+            shutil.which("javac"),
+            self._find_jar(),
+            self._find_tool("apksigner"),
+        ])
+
+    def build_apk(self, output, url, name, pkg, icon_png=None, version_code=1, version_name="1.0", feature_options=None, app_id=None):
+        if not self.can_build_apk:
+            return False
+        try:
+            template_apk = self._ensure_template_apk(icon_png)
+            if not template_apk or not template_apk.exists():
+                return False
+            self._patch_template_apk(
+                template_apk=template_apk,
+                output=Path(output),
+                url=url,
+                name=name,
+                pkg=pkg,
+                icon_png=icon_png,
+                version_code=version_code,
+                version_name=version_name,
+                feature_options=feature_options or {},
+                app_id=app_id or pkg,
+            )
+            if not self._validate_built_apk(Path(output)):
+                raise RuntimeError("built APK failed alignment validation")
+            return True
+        except Exception as e:
+            print(f"[ApkBuilder] template build failed: {e}")
+            return False
+
+    def _ensure_template_apk(self, icon_png=None):
+        template_apk = self._template_apk_path()
+        revision_file = self.template_dir / "template.revision"
+        current_revision = revision_file.read_text().strip() if revision_file.exists() else ""
+        if template_apk.exists() and current_revision == self.TEMPLATE_REVISION:
+            return template_apk
+        if template_apk.exists():
+            template_apk.unlink()
+        built = self._build_base_template(template_apk, icon_png)
+        if built and built.exists():
+            revision_file.write_text(self.TEMPLATE_REVISION)
+        return built if built and built.exists() else None
+
+    def _template_apk_path(self):
+        return self.template_dir / self.TEMPLATE_APK_NAME
+
+    def _seed_template_from_existing_generated(self, template_apk: Path):
+        generated_dir = self.root / "generated"
+        if not generated_dir.exists():
+            return None
+        for candidate in generated_dir.glob("*/downloads/android.apk"):
+            if candidate.is_file():
+                shutil.copy(candidate, template_apk)
+                return template_apk
+        return None
+
+    def _build_base_template(self, template_apk: Path, icon_png=None):
+        aapt2_candidates = self._find_tools("aapt2")
+        d8 = self._find_tool("d8")
+        javac = shutil.which("javac")
+        jar = self._find_jar()
+        apksigner = self._find_tool("apksigner")
+        if not all([aapt2_candidates, d8, javac, jar, apksigner]):
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            src = tmp / "src" / "w"
+            src.mkdir(parents=True)
+            (src / "M.java").write_text(ACTIVITY_JAVA)
+
+            manifest = tmp / "AndroidManifest.xml"
+            manifest.write_text(
+                MANIFEST_XML.format(
+                    pkg=self.TEMPLATE_PACKAGE,
+                    name=self.TEMPLATE_APP_NAME,
+                    version_code=self.TEMPLATE_VERSION_CODE,
+                    version_name=self.TEMPLATE_VERSION_NAME,
+                )
+            )
+
+            mipmap = tmp / "res" / "mipmap"
+            mipmap.mkdir(parents=True)
+            if icon_png:
+                (mipmap / "ic_launcher.png").write_bytes(icon_png)
+            else:
+                (mipmap / "ic_launcher.png").write_bytes(self._blank_png())
+
+            compiled = tmp / "compiled"
+            compiled.mkdir()
+            apk_unsigned = tmp / "app-unsigned.apk"
+            aapt2 = self._run_aapt2_with_fallback(aapt2_candidates, compiled, tmp, manifest, jar, apk_unsigned)
+            if not aapt2:
+                print("[ApkBuilder] All aapt2 versions failed")
+                return None
+
+            classes = tmp / "classes"
+            classes.mkdir()
+            subprocess.run(
+                [javac, "-source", "1.8", "-target", "1.8", "-bootclasspath", jar, "-d", str(classes), str(src / "M.java")],
+                check=True,
+                capture_output=True,
+            )
+
+            dex_out = tmp / "dex"
+            dex_out.mkdir()
+            class_files = [str(f) for f in classes.rglob("*.class")]
+            subprocess.run([d8, "--output", str(dex_out)] + class_files, check=True, capture_output=True)
+
+            with zipfile.ZipFile(apk_unsigned, "a") as z:
+                z.write(dex_out / "classes.dex", "classes.dex")
+                z.writestr("assets/webtoapp_config.json", self._config_json("https://example.com", {}))
+
+            aligned = tmp / "app-aligned.apk"
+            self._align_apk(apk_unsigned, aligned)
+
+            signed = tmp / "app-signed.apk"
+            shutil.copy(aligned, signed)
+            keystore, password, alias = self._ensure_template_keystore()
+            subprocess.run(
+                [
+                    apksigner,
+                    "sign",
+                    "--ks",
+                    str(keystore),
+                    "--ks-pass",
+                    f"pass:{password}",
+                    "--key-pass",
+                    f"pass:{password}",
+                    "--ks-key-alias",
+                    alias,
+                    str(signed),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            shutil.copy(signed, template_apk)
+            return template_apk
+
+    def _ensure_template_keystore(self):
+        """Keystore for signing the throwaway base template APK.
+
+        Not security-critical (the template is re-signed per-app), but the
+        password is sourced from config rather than hard-coded. Returns
+        ``(keystore_path, password, alias)``.
+        """
+        keystore = self.certs_dir / "android-template.keystore"
+        password = config.android_template_keystore_password()
+        alias = self.TEMPLATE_KEY_ALIAS
+        if keystore.exists():
+            return keystore, password, alias
+        self._generate_keystore(
+            keystore=keystore,
+            password=password,
+            alias=alias,
+            dname="CN=WebToApp Build Template,O=WebToApp,C=CN",
+        )
+        return keystore, password, alias
+
+    def _ensure_app_keystore(self, app_id: str):
+        """Return ``(keystore_path, password, alias)`` for ``app_id``.
+
+        Generated once on first build and reused on every later build of the
+        same app_id, so the signing certificate stays stable — required for
+        Android to accept reinstalls as in-place updates (same package name +
+        same signer). Each app_id gets a distinct random key, so no two
+        generated apps share a signing certificate.
+        """
+        safe_id = re.sub(r"[^a-z0-9_]", "", str(app_id or "").lower()) or "app"
+        keystore = self.app_keys_dir / f"{safe_id}.keystore"
+        meta_path = self.app_keys_dir / f"{safe_id}.json"
+        alias = "app"
+        if keystore.exists() and meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                password = str(meta.get("password") or "")
+                stored_alias = str(meta.get("alias") or alias)
+                if password:
+                    return keystore, password, stored_alias
+            except Exception:
+                pass  # corrupt metadata: fall through and regenerate
+        # First build for this app_id (or metadata lost): mint a fresh key.
+        if keystore.exists():
+            keystore.unlink()
+        password = secrets.token_urlsafe(24)
+        self._generate_keystore(
+            keystore=keystore,
+            password=password,
+            alias=alias,
+            dname=f"CN=WebToApp App {safe_id},O=WebToApp,C=CN",
+        )
+        meta_path.write_text(json.dumps({"alias": alias, "password": password}, ensure_ascii=False))
+        for path in (meta_path, keystore):
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        return keystore, password, alias
+
+    def _generate_keystore(self, keystore: Path, password: str, alias: str, dname: str):
+        keystore.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "keytool",
+                "-genkeypair",
+                "-v",
+                "-keystore",
+                str(keystore),
+                "-alias",
+                alias,
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "36500",
+                "-storepass",
+                password,
+                "-keypass",
+                password,
+                "-dname",
+                dname,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    def _patch_template_apk(self, template_apk: Path, output: Path, url: str, name: str, pkg: str, icon_png, version_code: int, version_name: str, feature_options: dict, app_id: str = None):
+        apktool = self._find_apktool()
+        zipalign = self._find_tool("zipalign")
+        apksigner = self._find_tool("apksigner")
+        apksigner_jar = self._apksigner_jar()
+        keystore, password, alias = self._ensure_app_keystore(app_id or pkg)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            decoded = tmp / "decoded"
+            self._run_tool(apktool, ["d", "-f", str(template_apk), "-o", str(decoded)])
+
+            manifest_path = decoded / "AndroidManifest.xml"
+            manifest_text = manifest_path.read_text()
+            manifest_text = re.sub(r'package="[^"]+"', f'package="{pkg}"', manifest_text, count=1)
+            manifest_text = self._set_manifest_attr(manifest_text, "android:versionCode", str(int(version_code)))
+            manifest_text = self._set_manifest_attr(manifest_text, "android:versionName", version_name)
+            manifest_text = re.sub(r'android:label="[^"]+"', f'android:label="{self._xml_escape(name)}"', manifest_text, count=1)
+            manifest_path.write_text(manifest_text)
+
+            config_asset = decoded / "assets" / "webtoapp_config.json"
+            config_asset.parent.mkdir(parents=True, exist_ok=True)
+            config_asset.write_text(self._config_json(url, feature_options))
+
+            if icon_png:
+                mipmap = decoded / "res" / "mipmap" / "ic_launcher.png"
+                mipmap.parent.mkdir(parents=True, exist_ok=True)
+                mipmap.write_bytes(icon_png)
+
+            built_unsigned = tmp / "app-unsigned.apk"
+            self._run_tool(apktool, ["b", str(decoded), "-o", str(built_unsigned)])
+
+            built_aligned = tmp / "app-aligned.apk"
+            self._align_apk(built_unsigned, built_aligned)
+
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(built_aligned, output)
+            self._sign_apk(output, keystore, apksigner, apksigner_jar, password=password, alias=alias)
+
+    def _align_apk(self, source: Path, output: Path) -> None:
+        zipalign = self._find_tool("zipalign")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if zipalign:
+            subprocess.run([zipalign, "-f", "4", str(source), str(output)], check=True, capture_output=True)
+            return
+        self._python_zipalign(source, output, alignment=4)
+
+    def _python_zipalign(self, source: Path, output: Path, alignment: int = 4) -> None:
+        """Align stored ZIP entries without relying on the external zipalign tool."""
+        alignment = max(1, int(alignment or 1))
+        tmp_output = output.with_suffix(output.suffix + ".tmp")
+        if tmp_output.exists():
+            tmp_output.unlink()
+        with zipfile.ZipFile(source, "r") as zin, open(tmp_output, "wb") as raw_fp:
+            with zipfile.ZipFile(raw_fp, "w") as zout:
+                zout.comment = zin.comment
+                for info in zin.infolist():
+                    zinfo = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                    zinfo.compress_type = info.compress_type
+                    zinfo.comment = getattr(info, "comment", b"")
+                    zinfo.extra = info.extra or b""
+                    zinfo.create_system = info.create_system
+                    zinfo.create_version = info.create_version
+                    zinfo.extract_version = info.extract_version
+                    zinfo.flag_bits = info.flag_bits
+                    zinfo.volume = info.volume
+                    zinfo.internal_attr = info.internal_attr
+                    zinfo.external_attr = info.external_attr
+                    zinfo.header_offset = 0
+
+                    if info.is_dir():
+                        zout.writestr(zinfo, b"")
+                        continue
+
+                    data = zin.read(info.filename)
+                    if info.compress_type == zipfile.ZIP_STORED:
+                        extra = self._alignment_extra(zout.fp.tell(), info.filename, zinfo.extra, alignment)
+                        zinfo.extra = zinfo.extra + extra
+                    zout.writestr(zinfo, data)
+        tmp_output.replace(output)
+
+    def _alignment_extra(self, current_offset: int, filename: str, existing_extra: bytes, alignment: int) -> bytes:
+        """Return a valid extra-field padding block that keeps the next file aligned."""
+        alignment = max(1, int(alignment or 1))
+        name_len = len(str(filename or "").encode("utf-8"))
+        extra_len = len(existing_extra or b"")
+        pad_data_len = (alignment - ((current_offset + 30 + name_len + extra_len + 4) % alignment)) % alignment
+        return b"\xff\xff" + pad_data_len.to_bytes(2, "little") + (b"\x00" * pad_data_len)
+
+    def _validate_built_apk(self, apk_path: Path) -> bool:
+        try:
+            with zipfile.ZipFile(apk_path, "r") as zf:
+                arsc = zf.getinfo("resources.arsc")
+                if arsc.compress_type != zipfile.ZIP_STORED:
+                    return False
+                offset = self._zip_data_offset(zf, arsc)
+                if offset % 4 != 0:
+                    return False
+                dex = zf.getinfo("classes.dex")
+                if self._zip_data_offset(zf, dex) % 4 != 0:
+                    return False
+            return True
+        except Exception:
+            return False
+
+    def _zip_data_offset(self, zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:
+        fp = zf.fp
+        if fp is None:
+            raise RuntimeError("zip file is closed")
+        fp.seek(info.header_offset)
+        header = fp.read(30)
+        _, _, _, _, _, _, _, _, _, name_len, extra_len = struct.unpack("<IHHHHHIIIHH", header)
+        return info.header_offset + 30 + name_len + extra_len
+
+    def _run_aapt2_with_fallback(self, candidates, compiled, tmp, manifest, jar, apk_unsigned):
+        for aapt2 in candidates:
+            try:
+                res_zip = compiled / "res.zip"
+                if res_zip.exists():
+                    res_zip.unlink()
+                if apk_unsigned.exists():
+                    apk_unsigned.unlink()
+                subprocess.run([aapt2, "compile", "-o", str(res_zip), "--dir", str(tmp / "res")], check=True, capture_output=True)
+                subprocess.run([aapt2, "link", "-o", str(apk_unsigned), "-I", jar, "--manifest", str(manifest), str(res_zip)], check=True, capture_output=True)
+                return aapt2
+            except subprocess.CalledProcessError as e:
+                print(f"[ApkBuilder] aapt2 {aapt2} failed (exit={e.returncode}), trying next version")
+                continue
+        return None
+
+    def build_fallback(self, output, url, name, icon_png=None, color="#000000"):
+        manifest = {
+            "name": name,
+            "short_name": name[:12],
+            "start_url": url,
+            "display": "fullscreen",
+            "background_color": color,
+            "theme_color": color,
+            "icons": [{"src": "icon.png", "sizes": "256x256", "type": "image/png"}] if icon_png else [],
+        }
+        html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="{color}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>{name}</title><link rel="manifest" href="manifest.json">
+<style>*{{margin:0}}html,body,iframe{{width:100%;height:100%;border:0;overflow:hidden}}</style>
+</head><body>
+<iframe src="{url}" allow="fullscreen"></iframe>
+<script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');</script>
+</body></html>"""
+        sw = "self.addEventListener('fetch',e=>{e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)))});"
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(f"{name}/index.html", html)
+            z.writestr(f"{name}/manifest.json", json.dumps(manifest, ensure_ascii=False))
+            z.writestr(f"{name}/sw.js", sw)
+            if icon_png:
+                z.writestr(f"{name}/icon.png", icon_png)
+            z.writestr(
+                f"{name}/README.txt",
+                f"【{name} — Android 安装指南】\n\n"
+                f"方法一：将此文件夹部署到任意 HTTPS 服务器，用 Chrome 打开后点击「添加到主屏幕」\n"
+                f"方法二：直接在浏览器中访问 {url}\n",
+            )
+
+    def _config_json(self, url: str, feature_options: dict) -> str:
+        raw = feature_options or {}
+        payload = {
+            "url": str(url or "").strip() or "about:blank",
+            "immersive_fullscreen": bool(
+                raw.get("feature-immersive-fullscreen") or raw.get("feature_immersive_fullscreen")
+            ),
+            "desktop_mode": bool(
+                raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
+            ),
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _blank_png(self):
+        size = 128
+        rgba = (124, 58, 237, 255)
+        ihdr_data = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+        ihdr = b"IHDR" + ihdr_data
+        ihdr_chunk = struct.pack(">I", len(ihdr_data)) + ihdr + struct.pack(">I", zlib.crc32(ihdr))
+        raw = b"".join(b"\x00" + bytes(rgba) * size for _ in range(size))
+        idat_data = zlib.compress(raw, 9)
+        idat = b"IDAT" + idat_data
+        idat_chunk = struct.pack(">I", len(idat_data)) + idat + struct.pack(">I", zlib.crc32(idat))
+        iend_chunk = struct.pack(">I", 0) + b"IEND" + struct.pack(">I", zlib.crc32(b"IEND"))
+        return b"\x89PNG\r\n\x1a\n" + ihdr_chunk + idat_chunk + iend_chunk
+
+    def _xml_escape(self, text: str) -> str:
+        return (
+            text.replace("&", "&amp;")
+            .replace('"', "&quot;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    def _set_manifest_attr(self, manifest_text: str, attr_name: str, attr_value: str) -> str:
+        attr_pattern = rf'{re.escape(attr_name)}="[^"]*"'
+        if re.search(attr_pattern, manifest_text):
+            return re.sub(attr_pattern, f'{attr_name}="{self._xml_escape(attr_value)}"', manifest_text, count=1)
+        manifest_open = re.search(r"<manifest\b", manifest_text)
+        if not manifest_open:
+            return manifest_text
+        insert_at = manifest_text.find(">", manifest_open.start())
+        if insert_at == -1:
+            return manifest_text
+        return (
+            manifest_text[:insert_at]
+            + f' {attr_name}="{self._xml_escape(attr_value)}"'
+            + manifest_text[insert_at:]
+        )
+
+    def _run_tool(self, tool, args):
+        if tool.startswith("java -jar "):
+            jar = tool[len("java -jar "):].strip("'")
+            subprocess.run(["java", "-jar", jar] + args, check=True, capture_output=True)
+            return
+        subprocess.run([tool] + args, check=True, capture_output=True)
+
+    def _sign_apk(self, apk_path: Path, keystore: Path, apksigner: str, apksigner_jar: Path, password: str = None, alias: str = None):
+        base_args = [
+            "sign",
+            "--ks",
+            str(keystore),
+            "--ks-pass",
+            f"pass:{password if password is not None else config.android_template_keystore_password()}",
+            "--key-pass",
+            f"pass:{password if password is not None else config.android_template_keystore_password()}",
+            "--ks-key-alias",
+            alias if alias is not None else self.TEMPLATE_KEY_ALIAS,
+            str(apk_path),
+        ]
+        if apksigner:
+            subprocess.run([apksigner] + base_args, check=True, capture_output=True)
+            return
+        if apksigner_jar and shutil.which("java"):
+            subprocess.run(["java", "-jar", str(apksigner_jar)] + base_args, check=True, capture_output=True)
+            return
+        raise RuntimeError("No apksigner available")
+
+    def _shell_quote(self, value: str) -> str:
+        return value.replace("'", "'\"'\"'")

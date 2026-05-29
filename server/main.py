@@ -1,0 +1,927 @@
+"""
+WebToApp — Distillation Engine Server
+FastAPI backend: site analysis, content distillation, app generation & download.
+"""
+
+import asyncio
+import hashlib
+import json
+import re
+import shutil
+import time
+import uuid
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Dict, List, Optional
+
+from server import config
+from server.engine.analyzer import SiteAnalyzer
+from server.engine.distiller import Distiller
+from server.engine.recipe import RecipeStore
+from server.engine import mobileconfig_signer
+from server.engine.storage import r2_storage
+from server.history_store import HistoryStore
+
+app = FastAPI(title="WebToApp Distillation Engine", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+_LONG_CACHE_PREFIXES = ("/css/", "/js/", "/assets/")
+_LONG_CACHE_SUFFIXES = (".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico", ".woff", ".woff2")
+
+# Paths that must never be reachable through the catch-all StaticFiles mount,
+# which is rooted at the whole project dir. Signing keystores, server source
+# and cert material live under these — serving them would leak private keys.
+_BLOCKED_STATIC_PREFIXES = ("/certs", "/server", "/.git", "/deploy")
+_BLOCKED_STATIC_SUFFIXES = (".keystore", ".jks", ".pem", ".key", ".p12", ".pfx")
+
+
+@app.middleware("http")
+async def block_sensitive_paths(request: Request, call_next):
+    """Hard 404 for sensitive paths before they hit the static file mount.
+
+    The frontend is served via ``StaticFiles(directory=ROOT)``, which would
+    otherwise expose ``certs/`` (signing keystores + private keys) and the
+    server source to anyone who guesses the path.
+
+    We return a Response directly rather than raising HTTPException: user
+    middleware runs outside Starlette's ExceptionMiddleware, so a raised
+    HTTPException here would surface as a 500 instead of a 404.
+    """
+    raw_path = request.url.path
+    normalized = raw_path.rstrip("/").lower()
+    blocked = (
+        any(normalized == p or normalized.startswith(p + "/") for p in _BLOCKED_STATIC_PREFIXES)
+        or normalized.endswith(_BLOCKED_STATIC_SUFFIXES)
+    )
+    if blocked:
+        return PlainTextResponse("Not found", status_code=404)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def add_cache_headers(request: Request, call_next):
+    """Tag static-ish responses so Cloudflare (or any CDN) will cache them.
+
+    We never override an upstream-supplied Cache-Control; this only fills in
+    defaults for static assets and per-app icons.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    existing = response.headers.get("cache-control")
+    if existing:
+        return response
+    if path.startswith(_LONG_CACHE_PREFIXES) or path.endswith(_LONG_CACHE_SUFFIXES):
+        # 1 day fresh, 7 days stale-while-revalidate. Hashed query strings
+        # (?v=...) used in index.html keep these effectively immutable.
+        response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+    elif path.endswith("/icon.png") or path.endswith("/manifest.json"):
+        response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+ROOT = Path(__file__).parent.parent
+APPS_DIR = ROOT / "generated"
+APPS_DIR.mkdir(exist_ok=True)
+history_store = HistoryStore(APPS_DIR / "_history.json")
+_recipe_cache = {}
+
+analyzer = SiteAnalyzer()
+distiller = Distiller()
+recipes = RecipeStore()
+# Shared async HTTP client used for outbound calls (Cloudflare cache purge etc).
+http_client = httpx.AsyncClient(
+    follow_redirects=False,
+    timeout=30.0,
+    headers={"User-Agent": "WebToApp/1.0 (+https://github.com/)"},
+)
+SUPPORTED_PLATFORM_COUNT = 5
+DISTILL_WORKER_COUNT = 1
+DISTILL_TASK_TTL_SECONDS = 6 * 60 * 60
+DISTILL_TASK_MAX_FINISHED = 256
+APP_RETENTION_DAYS = 30
+APP_RETENTION_SWEEP_INTERVAL_SECONDS = 60 * 60
+RATE_LIMIT_BUCKET_TTL = 5 * 60  # forget IPs idle for this long
+
+_PWA_INLINE_OPEN_BUTTON_RE = re.compile(
+    r'\s*<div class="toolbar">\s*<a class="action" href=".*?">完整打开</a>\s*</div>',
+    re.S,
+)
+_PWA_INLINE_OPEN_CSS_RE = re.compile(
+    r'\s*\.toolbar\{\{.*?\}\}\s*\.action\{\{.*?\}\}',
+    re.S,
+)
+_PWA_NOTICE_OPEN_BUTTON_RE = re.compile(
+    r'\s*<a class="btn primary" href=".*?">完整打开</a>',
+    re.S,
+)
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _retention_cutoff_iso() -> str:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=APP_RETENTION_DAYS)
+    return cutoff.isoformat().replace("+00:00", "Z")
+
+
+class IPRateLimiter:
+    """In-memory sliding-window rate limiter, keyed by client IP.
+
+    Cheap enough for a single-process FastAPI deploy. Buckets idle past
+    `idle_ttl` are evicted on the fly so memory stays bounded even if the
+    proxy is hammered by a botnet rotating IPs.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: int, idle_ttl: int = 300):
+        self.max_requests = int(max_requests or 0)
+        self.window_seconds = int(window_seconds or 60)
+        self.idle_ttl = int(idle_ttl or 300)
+        self._buckets: Dict[str, list] = {}
+        self._lock = asyncio.Lock()
+        self._last_sweep = 0.0
+
+    async def allow(self, key: str) -> bool:
+        if self.max_requests <= 0:
+            return True
+        now = time.time()
+        cutoff = now - self.window_seconds
+        async with self._lock:
+            self._sweep_locked(now)
+            timestamps = [t for t in self._buckets.get(key, []) if t > cutoff]
+            if len(timestamps) >= self.max_requests:
+                self._buckets[key] = timestamps
+                return False
+            timestamps.append(now)
+            self._buckets[key] = timestamps
+            return True
+
+    def _sweep_locked(self, now: float) -> None:
+        if now - self._last_sweep < 30:
+            return
+        self._last_sweep = now
+        idle_cutoff = now - self.idle_ttl
+        expired = [key for key, ts in self._buckets.items() if not ts or ts[-1] < idle_cutoff]
+        for key in expired:
+            self._buckets.pop(key, None)
+
+
+class DistillTaskQueue:
+    def __init__(self, worker_count: int = 1):
+        self.worker_count = max(1, int(worker_count or 1))
+        self._queue = asyncio.Queue()
+        self._tasks: Dict[str, dict] = {}
+        self._lock = asyncio.Lock()
+        self._workers = []
+
+    async def start(self) -> None:
+        if self._workers:
+            return
+        self._workers = [
+            asyncio.create_task(self._worker_loop(index), name=f"distill-worker-{index}")
+            for index in range(self.worker_count)
+        ]
+
+    async def stop(self) -> None:
+        if not self._workers:
+            return
+        for _ in self._workers:
+            await self._queue.put(None)
+        await asyncio.gather(*self._workers, return_exceptions=True)
+        self._workers = []
+
+    async def submit(self, payload: dict) -> dict:
+        now = _utc_now_iso()
+        task_id = uuid.uuid4().hex
+        app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
+        task = {
+            "task_id": task_id,
+            "app_id": app_id,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+            "payload": deepcopy(payload),
+            "result": None,
+            "error": None,
+            "finished_at": None,
+        }
+        async with self._lock:
+            self._prune_locked()
+            self._tasks[task_id] = task
+        await self._queue.put(task_id)
+        return {"task_id": task_id, "app_id": app_id, "status": "pending"}
+
+    async def get(self, task_id: str) -> Optional[dict]:
+        async with self._lock:
+            self._prune_locked()
+            task = self._tasks.get(task_id)
+            return deepcopy(task) if task else None
+
+    async def _worker_loop(self, _index: int) -> None:
+        while True:
+            task_id = await self._queue.get()
+            try:
+                if task_id is None:
+                    return
+                payload = None
+                async with self._lock:
+                    task = self._tasks.get(task_id)
+                    if not task:
+                        continue
+                    task["status"] = "running"
+                    task["updated_at"] = _utc_now_iso()
+                    payload = deepcopy(task["payload"])
+                try:
+                    result = await asyncio.to_thread(_run_distill_job, payload)
+                except Exception as exc:
+                    async with self._lock:
+                        task = self._tasks.get(task_id)
+                        if task:
+                            task["status"] = "error"
+                            task["error"] = str(exc)
+                            task["updated_at"] = _utc_now_iso()
+                            task["finished_at"] = time.time()
+                else:
+                    async with self._lock:
+                        task = self._tasks.get(task_id)
+                        if task:
+                            task["status"] = "done"
+                            task["result"] = result
+                            task["updated_at"] = _utc_now_iso()
+                            task["finished_at"] = time.time()
+            finally:
+                self._queue.task_done()
+
+    def _prune_locked(self) -> None:
+        now = time.time()
+        expired = []
+        finished = []
+        for task_id, task in self._tasks.items():
+            finished_at = task.get("finished_at")
+            if finished_at:
+                finished.append((finished_at, task_id))
+                if now - float(finished_at) > DISTILL_TASK_TTL_SECONDS:
+                    expired.append(task_id)
+        for task_id in expired:
+            self._tasks.pop(task_id, None)
+        if len(finished) <= DISTILL_TASK_MAX_FINISHED:
+            return
+        finished.sort()
+        for _finished_at, task_id in finished[:len(finished) - DISTILL_TASK_MAX_FINISHED]:
+            self._tasks.pop(task_id, None)
+
+
+# --- Models ---
+class AnalyzeRequest(BaseModel):
+    url: str
+
+class DistillRequest(BaseModel):
+    url: str
+    name: str = ""
+    color: str = "#7c3aed"
+    display: str = "fullscreen"
+    orientation: str = "any"
+    options: dict = {}
+
+
+class HistoryImportPayload(BaseModel):
+    version: int = 1
+    items: List[dict] = []
+
+
+# --- API Routes ---
+@app.post("/api/analyze")
+async def analyze_url(req: AnalyzeRequest):
+    try:
+        return await analyzer.analyze(str(req.url))
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+def _resolve_base_url(request: Request) -> str:
+    """Best effort: use PUBLIC_BASE_URL env var, else reconstruct from request."""
+    configured = config.public_base_url()
+    if configured:
+        return configured
+    # Trust the Host/X-Forwarded-* headers set by the request.
+    # For local testing this yields http://localhost:8000 which is fine for
+    # the dev box but won't work on an iPhone — set PUBLIC_BASE_URL in prod.
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _public_recipe(recipe: dict) -> dict:
+    safe = dict(recipe)
+    safe.pop("_custom_icon_data_url", None)
+    return safe
+
+
+def _device_fingerprint(request: Request) -> Optional[str]:
+    raw = str(request.headers.get("x-device-fingerprint", "") or "").strip()
+    if not raw:
+        raw = str(request.cookies.get("webtoapp_device_fingerprint", "") or "").strip()
+    if not raw:
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9._:-]", "", raw)[:160]
+    return cleaned or None
+
+
+def _history_payload(request: Request) -> dict:
+    items = history_store.list_history(_device_fingerprint(request), APPS_DIR)
+    return {"items": items}
+
+
+def _import_recipe_from_payload(item: dict) -> dict:
+    snapshot = deepcopy(item.get("snapshot") or {})
+    recipe = deepcopy(item.get("recipe") or snapshot.get("recipe") or {})
+    app_id = str(item.get("app_id") or snapshot.get("app_id") or recipe.get("id") or "").strip()
+    target_url = str(recipe.get("url") or snapshot.get("target_url") or "").strip()
+    if not app_id or not target_url:
+        raise ValueError("invalid history item")
+    normalized = {
+        "id": app_id,
+        "url": target_url,
+        "name": recipe.get("name") or snapshot.get("name") or app_id,
+        "color": recipe.get("color") or snapshot.get("color") or "#7c3aed",
+        "display": recipe.get("display") or snapshot.get("display") or "fullscreen",
+        "orientation": recipe.get("orientation") or snapshot.get("orientation") or "any",
+        "android_version_code": recipe.get("android_version_code") or snapshot.get("android_version_code") or 1,
+        "android_version_name": recipe.get("android_version_name") or snapshot.get("android_version_name") or "1.0.0",
+        "android_package_prefix": recipe.get("android_package_prefix") or snapshot.get("android_package_prefix") or config.android_package_prefix(),
+        "custom_icon_uploaded": bool(item.get("icon_data_url") or recipe.get("custom_icon_uploaded") or snapshot.get("custom_icon_uploaded")),
+        "options": recipe.get("options") or {},
+    }
+    icon_data_url = str(item.get("icon_data_url") or "").strip()
+    if icon_data_url:
+        normalized["_custom_icon_data_url"] = icon_data_url
+    return normalized
+
+
+def _recipe_needs_restore(existing: dict, imported: dict) -> bool:
+    keys = [
+        "url",
+        "name",
+        "color",
+        "display",
+        "orientation",
+        "android_version_code",
+        "android_version_name",
+        "android_package_prefix",
+    ]
+    return any(existing.get(key) != imported.get(key) for key in keys)
+
+
+def _build_distill_response(payload: dict) -> dict:
+    app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
+    recipe = distiller.create_recipe(
+        app_id=app_id,
+        url=str(payload["url"]),
+        name=payload.get("name") or "",
+        color=payload.get("color") or "#7c3aed",
+        display=payload.get("display") or "fullscreen",
+        orientation=payload.get("orientation") or "any",
+        options=payload.get("options") or {},
+    )
+    app_dir = APPS_DIR / app_id
+    base_url = payload.get("base_url") or ""
+    build_meta = distiller.write_app_files(app_dir, recipe, base_url=base_url)
+    history_store.record_build(
+        payload.get("device_fingerprint"),
+        recipe,
+        f"/a/{app_id}",
+        build_meta.get("runtime_url"),
+    )
+    return {
+        "app_id": app_id,
+        "url": f"/a/{app_id}",
+        "recipe": _public_recipe(recipe),
+        "ios": build_meta.get("ios", {}),
+        "runtime_url": build_meta.get("runtime_url"),
+        "signing_available": mobileconfig_signer.can_sign(),
+    }
+
+
+def _run_distill_job(payload: dict) -> dict:
+    return _build_distill_response(payload)
+
+
+distill_queue = DistillTaskQueue(worker_count=DISTILL_WORKER_COUNT)
+# Cheap anti-abuse safety net for the build endpoint: ~10 submissions / minute
+# per source IP. The real quota lives on device fingerprint (see config.daily_build_quota_per_device).
+distill_rate_limiter = IPRateLimiter(max_requests=10, window_seconds=60, idle_ttl=RATE_LIMIT_BUCKET_TTL)
+retention_task = None
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP. Trusts X-Forwarded-For only behind a known proxy."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        first = forwarded.split(",", 1)[0].strip()
+        if first:
+            return first
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+    client = request.client
+    return client.host if client else "unknown"
+
+
+def _purge_expired_generated_apps() -> int:
+    expired = history_store.list_expired_apps(_retention_cutoff_iso())
+    if not expired:
+        return 0
+    removed_ids = []
+    for item in expired:
+        app_id = item["app_id"]
+        app_dir = APPS_DIR / app_id
+        try:
+            if app_dir.exists():
+                shutil.rmtree(app_dir)
+            removed_ids.append(app_id)
+        except Exception:
+            continue
+    if not removed_ids:
+        return 0
+    history_store.purge_apps(removed_ids)
+    for app_id in removed_ids:
+        _recipe_cache.pop(app_id, None)
+    if r2_storage.configured:
+        for app_id in removed_ids:
+            try:
+                r2_storage.delete_app(app_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Retention] R2 cleanup failed for {app_id}: {exc}")
+    print(f"[Retention] Purged {len(removed_ids)} expired apps: {', '.join(removed_ids[:10])}")
+    return len(removed_ids)
+
+
+async def _retention_loop() -> None:
+    while True:
+        try:
+            await asyncio.sleep(APP_RETENTION_SWEEP_INTERVAL_SECONDS)
+            await asyncio.to_thread(_purge_expired_generated_apps)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[Retention] Sweep failed: {exc}")
+
+
+@app.on_event("startup")
+async def _startup_services():
+    global retention_task
+    await asyncio.to_thread(_purge_expired_generated_apps)
+    await distill_queue.start()
+    retention_task = asyncio.create_task(_retention_loop(), name="app-retention-sweeper")
+
+
+@app.post("/api/distill")
+async def distill_app(req: DistillRequest, request: Request):
+    if not await distill_rate_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="提交太频繁，请稍后再试。")
+    device_fingerprint = _device_fingerprint(request)
+    quota = config.daily_build_quota_per_device()
+    if quota > 0 and device_fingerprint:
+        since_iso = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        used = history_store.count_recent_builds(device_fingerprint, since_iso)
+        if used >= quota:
+            raise HTTPException(
+                status_code=429,
+                detail=f"已达每日生成上限（{used}/{quota}），24 小时后自动恢复。",
+            )
+    task = await distill_queue.submit(
+        {
+            "url": str(req.url),
+            "name": req.name,
+            "color": req.color,
+            "display": req.display,
+            "orientation": req.orientation,
+            "options": req.options or {},
+            "base_url": _resolve_base_url(request),
+            "device_fingerprint": device_fingerprint,
+        }
+    )
+    return JSONResponse(task, status_code=202)
+
+
+@app.get("/api/distill/{task_id}")
+async def distill_task_status(task_id: str):
+    task = await distill_queue.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task["status"] == "done":
+        return dict(task["result"] or {})
+    if task["status"] == "error":
+        raise HTTPException(500, task.get("error") or "生成失败")
+    return {
+        "task_id": task["task_id"],
+        "app_id": task["app_id"],
+        "status": task["status"],
+        "created_at": task["created_at"],
+        "updated_at": task["updated_at"],
+    }
+
+
+class UpdateUrlRequest(BaseModel):
+    url: str
+
+
+@app.patch("/api/app/{app_id}/url")
+async def update_app_url(app_id: str, body: UpdateUrlRequest):
+    """Hot-swap the target URL of an already-installed Web Clip.
+    Users don't need to reinstall — their Web Clip still points at our /launch
+    endpoint, which now redirects to the new URL."""
+    recipe_path = APPS_DIR / app_id / "recipe.json"
+    if not recipe_path.exists():
+        raise HTTPException(404, "App not found")
+    recipe = json.loads(recipe_path.read_text())
+    old_url = recipe.get("url")
+    recipe["url"] = body.url
+    recipe_path.write_text(json.dumps(recipe, ensure_ascii=False, indent=2))
+    history_store.update_recipe(recipe, public_path=f"/a/{app_id}", runtime_url=recipe.get("url"))
+    distiller._write_download_page(APPS_DIR / app_id, recipe)
+    purge_result = await _purge_launch_cache(app_id)
+    return {
+        "app_id": app_id,
+        "old_url": old_url,
+        "new_url": body.url,
+        "cache_purged": purge_result,
+    }
+
+
+async def _purge_launch_cache(app_id: str) -> Optional[bool]:
+    """Eagerly evict the ``/launch`` redirect from the Cloudflare edge cache.
+
+    Returns ``True`` on success, ``False`` on failure, ``None`` when no
+    Cloudflare API credentials are configured (the caller can rely on the
+    short TTL instead).
+    """
+    if not config.cloudflare_purge_available():
+        return None
+    base = config.public_base_url()
+    if not base:
+        return None
+    target = f"{base.rstrip('/')}/a/{app_id}/launch"
+    try:
+        resp = await http_client.post(
+            f"https://api.cloudflare.com/client/v4/zones/{config.cloudflare_zone_id()}/purge_cache",
+            headers={
+                "Authorization": f"Bearer {config.cloudflare_api_token()}",
+                "Content-Type": "application/json",
+            },
+            json={"files": [target]},
+            timeout=8.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[CF Purge] {app_id}: {exc}")
+        return False
+    if resp.status_code >= 400:
+        print(f"[CF Purge] {app_id}: HTTP {resp.status_code} {resp.text[:200]}")
+        return False
+    return True
+
+
+@app.get("/api/recipes/popular")
+async def popular_recipes():
+    return recipes.get_popular()
+
+
+@app.get("/api/stats")
+async def homepage_stats():
+    app_count = sum(1 for _ in APPS_DIR.glob("*/recipe.json"))
+    recipe_count = len(recipes.get_popular())
+    return {
+        "generatedApps": app_count,
+        "supportedPlatforms": SUPPORTED_PLATFORM_COUNT,
+        "sharedRecipes": recipe_count,
+    }
+
+
+@app.get("/api/history")
+async def history_index(request: Request):
+    return _history_payload(request)
+
+
+@app.post("/api/history/attach/{app_id}")
+async def attach_history_item(app_id: str, request: Request):
+    recipe_path = APPS_DIR / app_id / "recipe.json"
+    if not recipe_path.exists():
+        raise HTTPException(404, "App not found")
+    device_fingerprint = _device_fingerprint(request)
+    if not device_fingerprint:
+        return {"attached": False, "reason": "missing_device_fingerprint"}
+    history_store.attach_app(device_fingerprint, app_id)
+    return {"attached": True, "app_id": app_id, "history": _history_payload(request)}
+
+
+@app.post("/api/history/recover")
+async def recover_history(request: Request):
+    device_fingerprint = _device_fingerprint(request)
+    if not device_fingerprint:
+        return {"recovered": 0, "history": _history_payload(request)}
+    recovered = 0
+    for recipe_path in sorted(APPS_DIR.glob("*/recipe.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        app_id = recipe_path.parent.name
+        history_store.attach_app(device_fingerprint, app_id)
+        recovered += 1
+    return {"recovered": recovered, "history": _history_payload(request)}
+
+
+@app.get("/api/history/export")
+async def export_history(request: Request):
+    return history_store.export_history(_device_fingerprint(request), APPS_DIR)
+
+
+@app.post("/api/history/import")
+async def import_history(payload: HistoryImportPayload, request: Request):
+    device_fingerprint = _device_fingerprint(request)
+    if not device_fingerprint:
+        raise HTTPException(400, "Missing device fingerprint")
+    base_url = _resolve_base_url(request)
+    imported = 0
+    restored = 0
+    skipped = 0
+    errors = []
+    for item in payload.items:
+        try:
+            recipe = _import_recipe_from_payload(item)
+            app_id = recipe["id"]
+            app_dir = APPS_DIR / app_id
+            recipe_path = app_dir / "recipe.json"
+            effective_recipe = recipe
+            should_restore = not recipe_path.exists()
+            if recipe_path.exists():
+                try:
+                    existing_recipe = json.loads(recipe_path.read_text())
+                except Exception:
+                    existing_recipe = {}
+                if _recipe_needs_restore(existing_recipe, recipe):
+                    should_restore = True
+                else:
+                    effective_recipe = existing_recipe
+            if should_restore:
+                distiller.write_app_files(app_dir, recipe, base_url=base_url)
+                effective_recipe = _load_recipe(app_id)
+                restored += 1
+            history_store.import_snapshot(
+                device_fingerprint,
+                item.get("snapshot") or {},
+                effective_recipe,
+                public_path=f"/a/{app_id}",
+                runtime_url=effective_recipe.get("url"),
+            )
+            imported += 1
+        except Exception as exc:
+            skipped += 1
+            errors.append(str(exc))
+    return {
+        "imported": imported,
+        "restored": restored,
+        "skipped": skipped,
+        "errors": errors[:5],
+        "history": _history_payload(request),
+    }
+
+
+@app.delete("/api/history/{app_id}")
+async def delete_history_item(app_id: str, request: Request):
+    device_fingerprint = _device_fingerprint(request)
+    if not device_fingerprint:
+        raise HTTPException(400, "Missing device fingerprint")
+    removed = history_store.remove_from_device(device_fingerprint, app_id)
+    if not removed:
+        raise HTTPException(404, "History item not found")
+    return {"removed": True, "app_id": app_id, "history": _history_payload(request)}
+
+
+@app.on_event("shutdown")
+async def _shutdown_clients():
+    global retention_task
+    if retention_task is not None:
+        retention_task.cancel()
+        await asyncio.gather(retention_task, return_exceptions=True)
+        retention_task = None
+    await asyncio.to_thread(_purge_expired_generated_apps)
+    await distill_queue.stop()
+    history_store.flush()
+    await http_client.aclose()
+
+
+def _load_recipe(app_id: str) -> dict:
+    recipe_path = APPS_DIR / app_id / "recipe.json"
+    if not recipe_path.exists():
+        raise HTTPException(404, "App not found")
+    stat = recipe_path.stat()
+    cache_key = (str(recipe_path), stat.st_mtime_ns, stat.st_size)
+    cached = _recipe_cache.get(app_id)
+    if cached and cached.get("key") == cache_key:
+        return deepcopy(cached["value"])
+    value = json.loads(recipe_path.read_text())
+    _recipe_cache[app_id] = {"key": cache_key, "value": value}
+    return deepcopy(value)
+
+
+# --- App Serving ---
+DOWNLOAD_TYPES = {
+    "windows": ("windows.zip", "application/zip"),
+    "macos": ("macos.zip", "application/zip"),
+    "linux": ("linux.tar.gz", "application/gzip"),
+    "android": ("android.apk", "application/vnd.android.package-archive"),
+    "android_fallback": ("android.zip", "application/zip"),
+    "ios": ("ios.mobileconfig", "application/x-apple-aspen-config"),
+}
+
+
+@app.get("/a/{app_id}")
+async def serve_download_page(app_id: str, request: Request):
+    """Serve the download landing page."""
+    app_dir = APPS_DIR / app_id
+    recipe_path = app_dir / "recipe.json"
+    if not recipe_path.exists():
+        raise HTTPException(404, "App not found")
+    device_fingerprint = _device_fingerprint(request)
+    if device_fingerprint:
+        try:
+            history_store.attach_app(device_fingerprint, app_id)
+        except Exception:
+            pass
+    history_store.record_visit(app_id, "landing")
+    page_path = app_dir / "page.html"
+    if page_path.exists():
+        try:
+            page_ok = (
+                page_path.stat().st_mtime_ns >= recipe_path.stat().st_mtime_ns
+                and Distiller.DOWNLOAD_PAGE_MARKER in page_path.read_text(errors="ignore")[:256]
+            )
+        except Exception:
+            page_ok = False
+        if page_ok:
+            return FileResponse(page_path, media_type="text/html; charset=utf-8")
+    recipe = _load_recipe(app_id)
+    distiller._write_download_page(app_dir, recipe)
+    if page_path.exists():
+        return FileResponse(page_path, media_type="text/html; charset=utf-8")
+    return HTMLResponse(distiller.render_download_page(app_dir, recipe))
+
+
+@app.get("/a/{app_id}/download/{platform}")
+async def serve_download(app_id: str, platform: str):
+    """Download a platform-specific app package.
+
+    Preference order:
+      1. Public CDN URL recorded in ``recipe.downloads_cdn`` (302 redirect).
+      2. Local file in ``generated/<app_id>/downloads/`` (FileResponse).
+    """
+    if platform not in DOWNLOAD_TYPES:
+        raise HTTPException(400, f"Unsupported platform: {platform}")
+
+    filename, media_type = DOWNLOAD_TYPES[platform]
+    filepath = APPS_DIR / app_id / "downloads" / filename
+
+    # Android: try APK first, fall back to ZIP
+    if platform == "android" and not filepath.exists():
+        filename, media_type = DOWNLOAD_TYPES["android_fallback"]
+        filepath = APPS_DIR / app_id / "downloads" / filename
+
+    recipe_path = APPS_DIR / app_id / "recipe.json"
+    recipe = {}
+    if recipe_path.exists():
+        try:
+            recipe = json.loads(recipe_path.read_text())
+        except Exception:
+            recipe = {}
+
+    cdn_url = (recipe.get("downloads_cdn") or {}).get(filename)
+    if cdn_url:
+        history_store.record_visit(app_id, f"download:{platform}")
+        # 302 keeps the URL hot-swappable if we later re-upload under the same key.
+        return RedirectResponse(cdn_url, status_code=302)
+
+    if not filepath.exists():
+        raise HTTPException(404, "Download not found")
+    history_store.record_visit(app_id, f"download:{platform}")
+    name = recipe.get("name") or app_id
+    dl_name = f"{name}-{platform}.{filename.split('.', 1)[1]}"
+    return FileResponse(filepath, media_type=media_type, filename=dl_name)
+
+
+@app.get("/a/{app_id}/pwa")
+async def serve_pwa(app_id: str):
+    """Serve the PWA version (for Android install)."""
+    pwa = APPS_DIR / app_id / "pwa.html"
+    if not pwa.exists():
+        raise HTTPException(404)
+    html = pwa.read_text()
+    html = _PWA_INLINE_OPEN_BUTTON_RE.sub("", html)
+    html = _PWA_INLINE_OPEN_CSS_RE.sub("", html)
+    html = _PWA_NOTICE_OPEN_BUTTON_RE.sub("", html)
+    html = html.replace(
+        "部分站点会阻止 iframe、强制新窗口、或要求系统浏览器完成登录与支付。遇到这种情况，直接完整打开会更稳定。",
+        "部分站点会阻止 iframe、强制新窗口、或要求系统浏览器完成登录与支付。遇到这种情况，请返回上一级，在网站预览窗口右上角使用完整打开。",
+    )
+    history_store.record_visit(app_id, "pwa")
+    return HTMLResponse(html)
+
+
+@app.get("/a/{app_id}/manifest.json")
+async def serve_manifest(app_id: str):
+    manifest = APPS_DIR / app_id / "manifest.json"
+    if not manifest.exists():
+        raise HTTPException(404)
+    return FileResponse(manifest, media_type="application/manifest+json")
+
+
+@app.get("/a/{app_id}/sw.js")
+async def serve_sw(app_id: str):
+    sw = APPS_DIR / app_id / "sw.js"
+    if not sw.exists():
+        raise HTTPException(404)
+    return FileResponse(sw, media_type="application/javascript")
+
+
+@app.get("/a/{app_id}/icon.png")
+async def serve_icon(app_id: str):
+    """Serve the app's high-resolution icon (used by download page, PWA manifest, etc.)."""
+    icon = APPS_DIR / app_id / "icon.png"
+    if not icon.exists():
+        raise HTTPException(404)
+    return FileResponse(icon, media_type="image/png")
+
+
+@app.api_route("/a/{app_id}/proxy", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+@app.api_route("/a/{app_id}/proxy/{proxied_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+async def proxy_app(app_id: str, proxied_path: str = ""):
+    """Legacy reverse-proxy endpoint, fully removed.
+
+    Earlier PWA shells iframed this route, which forced every target-site
+    resource to transit our origin server. New builds load the target URL
+    directly. Kept as a stable 410 so any cached/QR-shared link gets a
+    deterministic response instead of a 404 chain or accidental revival.
+
+    The 410 itself ships with a long Cache-Control so CDNs (Cloudflare etc.)
+    will absorb scanner / botnet traffic at the edge without ever touching
+    the origin. 24h is plenty — the route will never come back.
+    """
+    return JSONResponse(
+        {"detail": "Proxy route permanently removed."},
+        status_code=410,
+        headers={
+            "Cache-Control": "public, max-age=86400, s-maxage=86400",
+            "CDN-Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@app.api_route("/a/{app_id}/launch", methods=["GET", "HEAD"])
+async def launch_web_clip(app_id: str):
+    """Dynamic launcher for installed iOS Web Clips.
+    The mobileconfig's WebClip URL points here, so when the user taps the home
+    screen icon, iOS opens this endpoint which 302-redirects to the recipe's
+    current target. Update the target via PATCH /api/app/{id}/url and every
+    subsequent tap loads the new URL — no re-install needed.
+
+    Cached at the edge for ``LAUNCH_CACHE_MAX_AGE`` seconds (default 60s) so a
+    swarm of taps doesn't all hit the origin. Hot-swaps via PATCH eagerly
+    purge the cache when CLOUDFLARE_API_TOKEN is set; otherwise users see the
+    new URL once the TTL expires.
+    """
+    recipe = _load_recipe(app_id)
+    target = recipe.get("url")
+    if not target:
+        raise HTTPException(500, "Recipe has no target URL")
+    history_store.record_visit(app_id, "launch")
+    max_age = config.launch_cache_max_age()
+    headers = {}
+    if max_age > 0:
+        # CDN-Cache-Control is honoured by Cloudflare/Fastly even when the
+        # client-side Cache-Control would otherwise inhibit caching.
+        headers["Cache-Control"] = f"public, max-age={max_age}, s-maxage={max_age}"
+        headers["CDN-Cache-Control"] = f"public, max-age={max_age}"
+    return RedirectResponse(target, status_code=302, headers=headers)
+
+
+@app.api_route("/a/{app_id}/install", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def serve_ios_install(app_id: str):
+    """Legacy compatibility route.
+
+    iOS install guidance now lives on the main download page, so keep this
+    route only as a stable entrypoint for old shared links and QR codes.
+    """
+    recipe_path = APPS_DIR / app_id / "recipe.json"
+    if not recipe_path.exists():
+        raise HTTPException(404, "App not found")
+    history_store.record_visit(app_id, "install")
+    return RedirectResponse(url=f"/a/{app_id}", status_code=307)
+
+
+# --- Static frontend ---
+app.mount("/", StaticFiles(directory=str(ROOT), html=True), name="static")

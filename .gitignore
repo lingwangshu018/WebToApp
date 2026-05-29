@@ -1,0 +1,47 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Runtime / user-generated data (NOT source) ---
+# Each generated app + its build artifacts and the device history store.
+generated/
+deploy/
+
+# --- Signing material (private keys — never commit) ---
+certs/*.keystore
+certs/*.jks
+certs/*.pem
+certs/*.key
+certs/*.p12
+certs/*.pfx
+certs/app-keys/
+
+# --- Android build caches ---
+server/engine/_android_template/
+server/engine/_android_tools/
+
+# --- Local secrets / config ---
+.env
+.env.local
+*.local
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Scratch / temp ---
+.tmp*
+*.tmp
+*.log

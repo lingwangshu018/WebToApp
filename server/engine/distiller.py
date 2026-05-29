@@ -1,0 +1,1046 @@
+"""
+Distillation Engine — Generates platform-specific app packages with icons.
+Each platform gets a real, installable, few-KB launcher with proper app icon.
+"""
+
+import json
+import re
+import uuid
+import zipfile
+import tarfile
+import struct
+import base64
+import io
+import zlib
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse, urljoin
+from PIL import Image, ImageOps, UnidentifiedImageError
+from server import config
+from server.engine.apk_builder import ApkBuilder
+from server.engine import mobileconfig_signer
+from server.engine.storage import r2_storage
+from urllib.request import urlopen, Request
+
+
+class Distiller:
+    DOWNLOAD_PAGE_MARKER = "<!-- WebToAppDownloadPage:v3 -->"
+
+    _ANDROID_PACKAGE_PART_RE = re.compile(r"[^a-z0-9_]")
+    _ANDROID_VERSION_NAME_RE = re.compile(r"[^0-9A-Za-z._-]")
+    _DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;,]+)?(?:;charset=[^;,]+)?;base64,(?P<data>.+)$", re.I | re.S)
+    _FEATURE_DOWNLOAD_DIR_VALUES = {"public_downloads", "app_folder"}
+    _FEATURE_PERMISSION_VALUES = {"prompt", "deny"}
+
+    def create_recipe(self, app_id, url, name, color, display, orientation, options):
+        clean_name = name or url.split("//")[-1].split("/")[0].replace("www.", "")
+        version_code = self._android_version_code(app_id, options)
+        version_name = self._android_version_name(options)
+        package_prefix = self._android_package_prefix(options)
+        feature_options = self._feature_options(options)
+        return {
+            "id": app_id, "url": url, "name": clean_name,
+            "color": color, "display": display, "orientation": orientation,
+            "android_version_code": version_code,
+            "android_version_name": version_name,
+            "android_package_prefix": package_prefix,
+            "_custom_icon_data_url": self._custom_icon_data_url(options),
+            "custom_icon_uploaded": bool(self._custom_icon_data_url(options)),
+            "options": feature_options,
+        }
+
+    def _android_version_code(self, app_id, options):
+        raw = options.get("android-version-code")
+        if raw in (None, ""):
+            raw = options.get("android_version_code")
+        if raw in (None, ""):
+            return self._next_android_version_code(app_id)
+        try:
+            value = int(str(raw).strip())
+        except Exception:
+            return self._next_android_version_code(app_id)
+        return max(1, value)
+
+    def _generated_root(self):
+        return Path(__file__).resolve().parents[2] / "generated"
+
+    def _next_android_version_code(self, app_id):
+        recipe_path = self._generated_root() / app_id / "recipe.json"
+        if not recipe_path.exists():
+            return 1
+        try:
+            recipe = json.loads(recipe_path.read_text())
+            prior = int(recipe.get("android_version_code", 0))
+            return max(1, prior + 1)
+        except Exception:
+            return 1
+
+    def _android_version_name(self, options):
+        raw = options.get("android-version-name") or options.get("android_version_name") or "1.0.0"
+        cleaned = self._ANDROID_VERSION_NAME_RE.sub("", str(raw).strip())
+        cleaned = cleaned.strip(".-_")
+        return cleaned or "1.0.0"
+
+    def _android_package_prefix(self, options):
+        raw = (
+            options.get("android-package-prefix")
+            or options.get("android_package_prefix")
+            or config.android_package_prefix()
+        )
+        parts = []
+        for chunk in str(raw or "").lower().split("."):
+            token = self._ANDROID_PACKAGE_PART_RE.sub("", chunk)
+            if not token:
+                continue
+            if token[0].isdigit():
+                token = f"p{token}"
+            parts.append(token)
+        if len(parts) < 2:
+            return "com.webtoapp"
+        return ".".join(parts)
+
+    def _custom_icon_data_url(self, options):
+        raw = options.get("custom-icon-data-url") or options.get("custom_icon_data_url") or ""
+        return str(raw).strip()
+
+    def _feature_options(self, options):
+        raw = options or {}
+        return {
+            "feature-immersive-fullscreen": bool(
+                raw.get("feature-immersive-fullscreen") or raw.get("feature_immersive_fullscreen")
+            ),
+            "feature-desktop-mode": bool(
+                raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
+            ),
+        }
+
+    def _feature_flag(self, raw_options, *keys, default=False):
+        raw = raw_options if isinstance(raw_options, dict) else {}
+        for key in keys:
+            if key in raw:
+                return bool(raw.get(key))
+        return default
+
+    def write_app_files(self, app_dir: Path, recipe: dict, base_url: Optional[str] = None) -> dict:
+        """Build every platform package.
+
+        `base_url` is the public origin of this server (e.g. https://example.com),
+        used for the iOS Web Clip's dynamic launcher URL. If None, the Web Clip
+        falls back to the hard-coded target URL (no runtime URL switching).
+
+        Returns a dict with build metadata (e.g. ios_signed, ios_dynamic_url).
+        """
+        app_dir.mkdir(parents=True, exist_ok=True)
+        dl = app_dir / "downloads"
+        dl.mkdir(exist_ok=True)
+
+        stored_recipe = dict(recipe)
+        stored_recipe.pop("_custom_icon_data_url", None)
+
+        # Fetch icon — all platform builds depend on this
+        icon_png = self._fetch_icon(recipe)
+        if icon_png:
+            (app_dir / "icon.png").write_bytes(icon_png)
+
+        self._write_download_page(app_dir, recipe)
+        direct_url = recipe["url"]
+        self._write_pwa_files(app_dir, recipe, direct_url)
+        self._build_windows(dl, recipe, icon_png, direct_url)
+        self._build_macos(dl, recipe, icon_png, direct_url)
+        self._build_linux(dl, recipe, icon_png, direct_url)
+        self._build_android(dl, recipe, icon_png, direct_url)
+        ios_meta = self._build_ios(dl, recipe, icon_png, base_url)
+
+        # Offload heavy artifacts to object storage if configured. Done after
+        # every build finishes so partial uploads don't poison the cache.
+        cdn_downloads = self._upload_downloads_to_cdn(recipe.get("id") or app_dir.name, dl)
+        if cdn_downloads:
+            stored_recipe["downloads_cdn"] = cdn_downloads
+            recipe["downloads_cdn"] = cdn_downloads
+
+        # Persist recipe last so it always reflects the final CDN state.
+        (app_dir / "recipe.json").write_text(json.dumps(stored_recipe, ensure_ascii=False, indent=2))
+
+        return {
+            "ios": ios_meta,
+            "runtime_url": direct_url,
+            "downloads_cdn": cdn_downloads,
+        }
+
+    def _upload_downloads_to_cdn(self, app_id: str, downloads_dir: Path) -> dict:
+        """Push every file in ``downloads/`` to R2. Failures are non-fatal:
+        we keep the local files so the endpoint can still serve via FileResponse."""
+        if not r2_storage.configured:
+            return {}
+        try:
+            return r2_storage.upload_app_downloads(app_id, downloads_dir)
+        except Exception as exc:  # noqa: BLE001 - upstream is third-party SDK
+            print(f"[Storage] R2 upload failed for {app_id}: {exc}")
+            return {}
+
+    # ===== Icon Fetching =====
+    USER_AGENT = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    )
+
+    def _fetch_icon(self, recipe):
+        """Fetch the best-resolution icon for the site.
+        Strategy:
+          0. If the user uploaded a custom icon, normalize and use it.
+          1. Parse the page HTML for declared icons (apple-touch-icon, icon, manifest, msapplication).
+          2. Try common well-known paths (/apple-touch-icon.png, /favicon.ico, ...).
+          3. Fall back to Google's favicon service.
+          4. Generate a themed placeholder PNG as last resort.
+        Returns valid PNG bytes (always non-None) for downstream platform builders.
+        """
+        custom_icon = self._custom_icon_png(recipe.get("_custom_icon_data_url"))
+        if custom_icon:
+            return custom_icon
+        url = recipe["url"]
+        candidates = self._collect_icon_candidates(url)
+        best = self._choose_best_icon(candidates)
+        if best:
+            return best
+        return self._make_placeholder_png(recipe.get("color", "#7c3aed"))
+
+    def _custom_icon_png(self, data_url):
+        if not data_url:
+            return None
+        match = self._DATA_URL_RE.match(str(data_url))
+        if not match:
+            return None
+        try:
+            raw = base64.b64decode(match.group("data"), validate=False)
+        except Exception:
+            return None
+        return self._normalize_uploaded_icon(raw)
+
+    def _normalize_uploaded_icon(self, raw_bytes):
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as image:
+                image = ImageOps.exif_transpose(image).convert("RGBA")
+                image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+                x = (512 - image.width) // 2
+                y = (512 - image.height) // 2
+                canvas.paste(image, (x, y), image)
+                out = io.BytesIO()
+                canvas.save(out, format="PNG")
+                return out.getvalue()
+        except (UnidentifiedImageError, OSError, ValueError):
+            return None
+
+    def _fetch_url_bytes(self, url, timeout=8):
+        """GET that returns response bytes, or None on any failure."""
+        try:
+            req = Request(url, headers={"User-Agent": self.USER_AGENT})
+            with urlopen(req, timeout=timeout) as resp:
+                if 200 <= resp.status < 300:
+                    return resp.read()
+        except Exception:
+            pass
+        return None
+
+    def _collect_icon_candidates(self, page_url):
+        """Return de-duped list of icon URLs sorted by preferred size (largest first)."""
+        scored = []  # list of (priority, url)
+        parsed = urlparse(page_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+
+        # Strategy 1: parse the page HTML for declared icons
+        html_bytes = self._fetch_url_bytes(page_url, timeout=10)
+        html = html_bytes.decode("utf-8", errors="ignore") if html_bytes else ""
+
+        if html:
+            # apple-touch-icon (typically 180x180+ on iOS sites)
+            for tag, href in self._iter_link_tags(html, r"apple-touch-icon(?:-precomposed)?"):
+                size = self._extract_sizes_attr(tag)
+                scored.append((1000 + size, urljoin(page_url, href)))
+
+            # rel="icon" / "shortcut icon"
+            for tag, href in self._iter_link_tags(html, r"(?:shortcut\s+)?icon"):
+                size = self._extract_sizes_attr(tag)
+                # PNGs preferred over .ico
+                bonus = 50 if href.lower().endswith(".png") else 0
+                scored.append((500 + size + bonus, urljoin(page_url, href)))
+
+            # PWA manifest → may contain icons
+            for _, href in self._iter_link_tags(html, r"manifest"):
+                manifest_url = urljoin(page_url, href)
+                for size, icon_url in self._icons_from_manifest(manifest_url):
+                    scored.append((900 + size, icon_url))
+
+            # msapplication-TileImage (Windows tile icon, often 144x144 PNG)
+            m = re.search(
+                r'<meta[^>]*name=["\']msapplication-TileImage["\'][^>]*content=["\']([^"\']+)',
+                html, re.I,
+            )
+            if m:
+                scored.append((400, urljoin(page_url, m.group(1))))
+
+        # Strategy 2: well-known fallback paths
+        for prio, path in [
+            (300, "/apple-touch-icon.png"),
+            (290, "/apple-touch-icon-precomposed.png"),
+            (280, "/favicon-192x192.png"),
+            (270, "/favicon-96x96.png"),
+            (250, "/favicon.png"),
+            (200, "/favicon.ico"),
+        ]:
+            scored.append((prio, base + path))
+
+        # Strategy 3: Google's favicon service (last resort, often low-res)
+        scored.append((100, f"https://www.google.com/s2/favicons?domain={parsed.netloc}&sz=256"))
+
+        # De-dupe while preserving highest-priority order
+        seen = set()
+        ordered = []
+        for _, u in sorted(scored, key=lambda x: -x[0]):
+            if u not in seen:
+                seen.add(u)
+                ordered.append(u)
+        return ordered
+
+    def _iter_link_tags(self, html, rel_pattern):
+        """Yield (full_tag, href) for every <link rel="<rel_pattern>" href="..."> match.
+        Tolerates attributes appearing in any order."""
+        tag_re = re.compile(r"<link\b[^>]*>", re.I)
+        rel_re = re.compile(rf'\brel\s*=\s*["\']({rel_pattern})["\']', re.I)
+        href_re = re.compile(r'\bhref\s*=\s*["\']([^"\']+)', re.I)
+        for tm in tag_re.finditer(html):
+            tag = tm.group(0)
+            if not rel_re.search(tag):
+                continue
+            hm = href_re.search(tag)
+            if hm:
+                yield tag, hm.group(1)
+
+    def _extract_sizes_attr(self, tag):
+        """Return numeric size from a `sizes="WxH"` attribute, or 0 if absent.
+        `sizes="any"` (typically SVG) gets a high pseudo-size."""
+        m = re.search(r'\bsizes\s*=\s*["\']([^"\']+)', tag, re.I)
+        if not m:
+            return 0
+        s = m.group(1).lower()
+        if "any" in s:
+            return 512
+        nums = re.findall(r"(\d+)\s*x\s*\d+", s)
+        return max((int(n) for n in nums), default=0)
+
+    def _icons_from_manifest(self, manifest_url):
+        """Parse a Web App Manifest and yield (size, absolute_url) for each icon."""
+        data = self._fetch_url_bytes(manifest_url, timeout=6)
+        if not data:
+            return
+        try:
+            manifest = json.loads(data.decode("utf-8", errors="ignore"))
+        except (ValueError, json.JSONDecodeError):
+            return
+        for icon in manifest.get("icons", []) or []:
+            src = icon.get("src")
+            if not src:
+                continue
+            sizes = icon.get("sizes", "")
+            nums = re.findall(r"(\d+)x\d+", sizes)
+            size = max((int(n) for n in nums), default=0)
+            yield size, urljoin(manifest_url, src)
+
+    def _choose_best_icon(self, candidate_urls):
+        """Try candidates in priority order. Return the largest valid PNG found.
+        Stops early at >=128px to avoid downloading every candidate."""
+        best_png = None
+        best_dim = 0
+        # Cap attempts so a misbehaving site can't stall the pipeline
+        for url in candidate_urls[:10]:
+            data = self._fetch_url_bytes(url, timeout=6)
+            if not data:
+                continue
+            png = self._normalize_to_png(data)
+            if not png:
+                continue
+            dim = self._png_dimension(png)
+            if dim > best_dim:
+                best_dim = dim
+                best_png = png
+            if best_dim >= 128:
+                break
+        return best_png
+
+    def _png_dimension(self, png_data):
+        if len(png_data) < 24 or png_data[:4] != b"\x89PNG":
+            return 0
+        return int.from_bytes(png_data[16:20], "big")
+
+    def _normalize_to_png(self, data):
+        """Accept a PNG or ICO blob; return PNG bytes or None.
+        Other formats (SVG, JPEG, BMP, ...) are skipped — keeping the converter dependency-free."""
+        if data[:4] == b"\x89PNG":
+            return data
+        if data[:4] == b"\x00\x00\x01\x00":  # ICO magic
+            return self._ico_to_png(data)
+        return None
+
+    def _ico_to_png(self, ico_data):
+        """Pick the largest entry from an ICO. Only Vista+ ICOs (with embedded PNG) succeed;
+        legacy BMP-encoded entries are skipped (BMP→PNG conversion is non-trivial)."""
+        if len(ico_data) < 6:
+            return None
+        count = int.from_bytes(ico_data[4:6], "little")
+        if count == 0:
+            return None
+        entries = []
+        for i in range(count):
+            off = 6 + i * 16
+            if off + 16 > len(ico_data):
+                break
+            e = ico_data[off:off + 16]
+            w = e[0] or 256
+            h = e[1] or 256
+            size = int.from_bytes(e[8:12], "little")
+            offset = int.from_bytes(e[12:16], "little")
+            entries.append((w * h, size, offset))
+        if not entries:
+            return None
+        entries.sort(reverse=True)  # largest first
+        for _, size, offset in entries:
+            if offset + size > len(ico_data):
+                continue
+            blob = ico_data[offset:offset + size]
+            if blob[:4] == b"\x89PNG":
+                return blob
+        return None
+
+    def _make_placeholder_png(self, hex_color: str, size: int = 128) -> bytes:
+        """Generate a valid solid-color RGBA PNG. Used when favicon download fails.
+        aapt2 has a bug parsing some malformed/tiny PNGs, so we always emit a proper one."""
+        h = hex_color.lstrip('#')
+        if len(h) == 3:
+            h = ''.join(c * 2 for c in h)
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        except ValueError:
+            r, g, b = 0x7c, 0x3a, 0xed
+        # IHDR
+        ihdr_data = struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)
+        ihdr = b'IHDR' + ihdr_data
+        ihdr_chunk = struct.pack('>I', len(ihdr_data)) + ihdr + struct.pack('>I', zlib.crc32(ihdr))
+        # IDAT
+        raw = b''.join(b'\x00' + bytes([r, g, b, 0xFF]) * size for _ in range(size))
+        idat_data = zlib.compress(raw, 9)
+        idat = b'IDAT' + idat_data
+        idat_chunk = struct.pack('>I', len(idat_data)) + idat + struct.pack('>I', zlib.crc32(idat))
+        # IEND
+        iend_chunk = struct.pack('>I', 0) + b'IEND' + struct.pack('>I', zlib.crc32(b'IEND'))
+        return b'\x89PNG\r\n\x1a\n' + ihdr_chunk + idat_chunk + iend_chunk
+
+    # ===== Icon Format Converters =====
+    def _png_to_ico(self, png_data):
+        """Convert PNG to ICO (embedded PNG, Windows Vista+)."""
+        w = int.from_bytes(png_data[16:20], 'big')
+        h = int.from_bytes(png_data[20:24], 'big')
+        return (
+            struct.pack('<HHH', 0, 1, 1) +  # ICONDIR: reserved, type=ICO, count=1
+            struct.pack('<BBBBHHII',
+                0 if w >= 256 else w, 0 if h >= 256 else h,
+                0, 0, 1, 32, len(png_data), 22) +  # ICONDIRENTRY
+            png_data
+        )
+
+    def _png_to_icns(self, png_data):
+        """Convert PNG to minimal ICNS (macOS icon)."""
+        icon_type = b'ic08'  # 256x256
+        entry_size = 8 + len(png_data)
+        total_size = 8 + entry_size
+        return (
+            b'icns' + struct.pack('>I', total_size) +
+            icon_type + struct.pack('>I', entry_size) +
+            png_data
+        )
+
+    # ===== Download Landing Page =====
+    def _write_download_page(self, app_dir: Path, r: dict):
+        (app_dir / "page.html").write_text(self.render_download_page(app_dir, r))
+
+    def render_download_page(self, app_dir: Path, r: dict) -> str:
+        base = f"/a/{r['id']}"
+        parsed = urlparse(r["url"])
+        source_host = parsed.netloc.replace("www.", "") or r["url"]
+        favicon = f"{base}/icon.png" if (app_dir / "icon.png").exists() \
+            else f"https://www.google.com/s2/favicons?domain={parsed.netloc}&sz=128"
+        cfg = app_dir / "downloads" / "ios.mobileconfig"
+        ios_signed = cfg.exists() and cfg.read_bytes()[:1] == b"\x30"
+        ios_badge = (
+            '<span class="ios-badge ios-badge-ok">已签名</span>'
+            if ios_signed else
+            '<span class="ios-badge ios-badge-warn">未签名，但仍可安装</span>'
+        )
+        platform_rows = [
+            (
+                "iPhone / iPad",
+                "apple",
+                f"{base}/download/ios",
+                ".mobileconfig · Safari 下载并安装描述文件",
+                "安装",
+            ),
+            (
+                "Android",
+                "android",
+                f"{base}/download/android",
+                ".apk / .zip · 直接安装或解压使用",
+                "下载",
+            ),
+            (
+                "macOS",
+                "apple",
+                f"{base}/download/macos",
+                ".zip · 原生 .app 图标 · 拖入应用文件夹",
+                "下载",
+            ),
+            (
+                "Windows",
+                "windows",
+                f"{base}/download/windows",
+                ".zip · 原生图标 · 解压即用",
+                "下载",
+            ),
+            (
+                "Linux",
+                "linux",
+                f"{base}/download/linux",
+                ".tar.gz · 桌面图标已内置 · 解压运行",
+                "下载",
+            ),
+        ]
+        platform_icons = {
+            "windows": (
+                '<svg viewBox="0 0 88 88" aria-hidden="true">'
+                '<path d="M0 12.402 35.687 7.542l.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/>'
+                '</svg>'
+            ),
+            "apple": (
+                '<svg viewBox="0 0 24 24" aria-hidden="true">'
+                '<path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/>'
+                '</svg>'
+            ),
+            "linux": (
+                '<svg viewBox="0 0 448 512" aria-hidden="true">'
+                '<path d="M220.8 123.3c1 .5 1.8 1.7 3 1.7 1.1 0 2.8-.4 2.9-1.5.2-1.4-1.9-2.3-3.2-2.9-1.7-.7-3.9-1-5.5-.1-.4.2-.8.7-.6 1.1.3 1.3 2.3 1.1 3.4 1.7zm-21.9 1.7c1.2 0 2-1.2 3-1.7 1.1-.6 3.1-.4 3.5-1.6.2-.4-.2-.9-.6-1.1-1.6-.9-3.8-.6-5.5.1-1.3.6-3.4 1.5-3.2 2.9.1 1 1.8 1.5 2.8 1.4zM420 403.8c-3.6-4-5.3-11.6-7.2-19.7-1.8-8.1-3.9-16.8-10.5-22.4-1.3-1.1-2.6-2.1-4-2.9-1.3-.8-2.7-1.5-4.1-2 9.2-27.3 5.6-54.5-3.7-79.1-11.4-30.1-31.3-56.4-46.5-74.4-17.1-21.5-33.7-41.9-33.4-72C311.1 85.4 315.7.1 234.8 0 132.4-.2 158 103.4 156.9 135.2c-1.7 23.4-6.4 41.8-22.5 64.7-18.9 22.5-45.5 58.8-58.1 96.7-6 17.9-8.8 36.1-6.2 53.3-6.5 5.8-11.4 14.7-16.6 20.2-4.2 4.3-10.3 5.9-17 8.3s-14 6-18.5 14.5c-2.1 3.9-2.8 8.1-2.8 12.4 0 3.9.6 7.9 1.2 11.8 1.2 8.1 2.5 15.7.8 20.8-5.2 14.4-5.9 24.4-2.2 31.7 3.8 7.3 11.4 10.5 20.1 12.3 17.3 3.6 40.8 2.7 59.3 12.5 19.8 10.4 39.9 14.1 55.9 10.4 11.6-2.6 21.1-9.6 25.9-20.2 12.5-.1 26.3-5.4 48.3-6.6 14.9-1.2 33.6 5.3 55.1 4.1.6 2.3 1.4 4.6 2.5 6.7v.1c8.3 16.7 23.8 24.3 40.3 23 16.6-1.3 34.1-11 48.3-27.9 13.6-16.4 36-23.2 50.9-32.2 7.4-4.5 13.4-10.1 13.9-18.3.4-8.2-4.4-17.3-15.5-29.7zM223.7 87.3c9.8-22.2 34.2-21.8 44-.4 6.5 14.2 3.6 30.9-4.3 40.4-1.6-.8-5.9-2.6-12.6-4.9 1.1-1.2 3.1-2.7 3.9-4.6 4.8-11.8-.2-27-9.1-27.3-7.3-.5-13.9 10.8-11.8 23-4.1-2-9.4-3.5-13-4.4-1-6.9-.3-14.6 2.9-21.8zM183 75.8c10.1 0 20.8 14.2 19.1 33.5-3.5 1-7.1 2.5-10.2 4.6 1.2-8.9-3.3-20.1-9.6-19.6-8.4.7-9.8 21.2-1.8 28.1 1 .8 1.9-.2-5.9 5.5-15.6-14.6-10.5-52.1 8.4-52.1zm-13.6 60.7c6.2-4.6 13.6-10 14.1-10.5 4.7-4.4 13.5-14.2 27.9-14.2 7.1 0 15.6 2.3 25.9 8.9 6.3 4.1 11.3 4.4 22.6 9.3 8.4 3.5 13.7 9.7 10.5 18.2-2.6 7.1-11 14.4-22.7 18.1-11.1 3.6-19.8 16-38.2 14.9-3.9-.2-7-1-9.6-2.1-8-3.5-12.2-10.4-20-15-8.6-4.8-13.2-10.4-14.7-15.3-1.4-4.9 0-9 4.2-12.3zm3.3 334c-2.7 35.1-43.9 34.4-75.3 18-29.9-15.8-68.6-6.5-76.5-21.9-2.4-4.7-2.4-12.7 2.6-26.4v-.2c2.4-7.6.6-16-.6-23.9-1.2-7.8-1.8-15 .9-20 3.5-6.7 8.5-9.1 14.8-11.3 10.3-3.7 11.8-3.4 19.6-9.9 5.5-5.7 9.5-12.9 14.3-18 5.1-5.5 10-8.1 17.7-6.9 8.1 1.2 15.1 6.8 21.9 16l19.6 35.6c9.5 19.9 43.1 48.4 41 68.9zm-1.4-25.9c-4.1-6.6-9.6-13.6-14.4-19.6 7.1 0 14.2-2.2 16.7-8.9 2.3-6.2 0-14.9-7.4-24.9-13.5-18.2-38.3-32.5-38.3-32.5-13.5-8.4-21.1-18.7-24.6-29.9s-3-23.3-.3-35.2c5.2-22.9 18.6-45.2 27.2-59.2 2.3-1.7.8 3.2-8.7 20.8-8.5 16.1-24.4 53.3-2.6 82.4.6-20.7 5.5-41.8 13.8-61.5 12-27.4 37.3-74.9 39.3-112.7 1.1.8 4.6 3.2 6.2 4.1 4.6 2.7 8.1 6.7 12.6 10.3 12.4 10 28.5 9.2 42.4 1.2 6.2-3.5 11.2-7.5 15.9-9 9.9-3.1 17.8-8.6 22.3-15 7.7 30.4 25.7 74.3 37.2 95.7 6.1 11.4 18.3 35.5 23.6 64.6 3.3-.1 7 .4 10.9 1.4 13.8-35.7-11.7-74.2-23.3-84.9-4.7-4.6-4.9-6.6-2.6-6.5 12.6 11.2 29.2 33.7 35.2 59 2.8 11.6 3.3 23.7.4 35.7 16.4 6.8 35.9 17.9 30.7 34.8-2.2-.1-3.2 0-4.2 0 3.2-10.1-3.9-17.6-22.8-26.1-19.6-8.6-36-8.6-38.3 12.5-12.1 4.2-18.3 14.7-21.4 27.3-2.8 11.2-3.6 24.7-4.4 39.9-.5 7.7-3.6 18-6.8 29-32.1 22.9-76.7 32.9-114.3 7.2zm257.4-11.5c-.9 16.8-41.2 19.9-63.2 46.5-13.2 15.7-29.4 24.4-43.6 25.5s-26.5-4.8-33.7-19.3c-4.7-11.1-2.4-23.1 1.1-36.3 3.7-14.2 9.2-28.8 9.9-40.6.8-15.2 1.7-28.5 4.2-38.7 2.6-10.3 6.6-17.2 13.7-21.1.3-.2.7-.3 1-.5.8 13.2 7.3 26.6 18.8 29.5 12.6 3.3 30.7-7.5 38.4-16.3 9-.3 15.7-.9 22.6 5.1 9.9 8.5 7.1 30.3 17.1 41.6 10.6 11.6 14 19.5 13.7 24.6zM173.3 148.7c2 1.9 4.7 4.5 8 7.1 6.6 5.2 15.8 10.6 27.3 10.6 11.6 0 22.5-5.9 31.8-10.8 4.9-2.6 10.9-7 14.8-10.4s5.9-6.3 3.1-6.6-2.6 2.6-6 5.1c-4.4 3.2-9.7 7.4-13.9 9.8-7.4 4.2-19.5 10.2-29.9 10.2s-18.7-4.8-24.9-9.7c-3.1-2.5-5.7-5-7.7-6.9-1.5-1.4-1.9-4.6-4.3-4.9-1.4-.1-1.8 3.7 1.7 6.5z"/>'
+                '</svg>'
+            ),
+            "android": (
+                '<svg viewBox="0 0 24 24" aria-hidden="true">'
+                '<path d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z"/>'
+                '</svg>'
+            ),
+        }
+        platform_links = "\n".join(
+            (
+                f'<a href="{href}" class="plat">'
+                f'<span class="plat-icon plat-icon-{icon_key}">{platform_icons[icon_key]}</span>'
+                f'<div class="plat-info"><div class="plat-name">{name}</div><div class="plat-detail">{detail}</div></div>'
+                f'<span class="plat-badge plat-dl">{action}</span>'
+                f'</a>'
+            )
+            for name, icon_key, href, detail, action in platform_rows
+        )
+        html = f"""{self.DOWNLOAD_PAGE_MARKER}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{r['name']} — 下载安装 | WebToApp</title>
+<meta name="description" content="为 {r['name']} 下载对应设备的安装包或安装描述文件。支持 iPhone、Android、Windows、macOS 和 Linux。">
+<meta name="theme-color" content="{r['color']}">
+<link rel="icon" href="/assets/site-logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+:root{{
+  --paper:#f4ebe0;
+  --paper-deep:#eadbc8;
+  --ink:#181412;
+  --ink-soft:rgba(24,20,18,.68);
+  --line:rgba(24,20,18,.1);
+  --line-strong:rgba(24,20,18,.16);
+  --accent:#c97953;
+  --accent-deep:#241d19;
+  --surface:rgba(255,251,246,.72);
+  --surface-strong:rgba(255,252,248,.88);
+  --shadow:0 28px 80px rgba(94,62,39,.12);
+}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+html{{-webkit-font-smoothing:antialiased}}
+body{{
+  min-height:100vh;
+  font-family:'Inter',system-ui,sans-serif;
+  color:var(--ink);
+  background:
+    radial-gradient(circle at top right, rgba(201,121,83,.12), transparent 22%),
+    linear-gradient(180deg, #f6efe8 0%, #efe4d6 100%);
+}}
+a{{color:inherit;text-decoration:none}}
+.page{{max-width:1360px;margin:0 auto;padding:28px 28px 44px}}
+.nav{{display:flex;align-items:center;justify-content:space-between;padding-bottom:18px;border-bottom:1px solid var(--line)}}
+.brand{{display:inline-flex;align-items:center;gap:12px;font-size:1.15rem;font-weight:700}}
+.brand img{{display:block;width:28px;height:28px;border-radius:8px;object-fit:cover}}
+.brand-note{{font-size:.82rem;color:var(--ink-soft);letter-spacing:.14em;text-transform:uppercase}}
+.hero{{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(420px,.98fr);gap:28px;align-items:stretch;padding-top:34px}}
+.hero-copy{{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:24px;padding:34px;background:linear-gradient(180deg, rgba(255,252,248,.78), rgba(255,248,241,.54));box-shadow:var(--shadow)}}
+.eyebrow{{margin-bottom:18px;font-size:.84rem;letter-spacing:.18em;color:rgba(24,20,18,.42);text-transform:uppercase}}
+.title{{max-width:7ch;font-family:'Noto Serif SC','Songti SC',serif;font-size:clamp(3.2rem,6.4vw,5.8rem);font-weight:900;line-height:.92;letter-spacing:-.05em}}
+.meta-row{{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}}
+.meta-chip{{display:inline-flex;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:rgba(255,251,246,.72);font-size:.92rem;color:var(--ink-soft)}}
+.desc{{max-width:30rem;margin-top:20px;font-size:1rem;line-height:1.78;color:var(--ink-soft)}}
+.source{{margin-top:16px;font-size:.9rem;color:rgba(24,20,18,.48);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}}
+.hero-panel{{display:flex;flex-direction:column;justify-content:space-between;border:1px solid var(--line);border-radius:24px;background:var(--surface-strong);box-shadow:var(--shadow);overflow:hidden}}
+.app-top{{padding:28px 28px 20px;border-bottom:1px solid var(--line)}}
+.app-head{{display:flex;align-items:center;gap:18px}}
+.icon{{width:82px;height:82px;border-radius:20px;flex-shrink:0;object-fit:contain;background:rgba(255,255,255,.56);border:1px solid rgba(24,20,18,.08);padding:10px;box-shadow:0 10px 24px rgba(84,58,39,.08)}}
+.app-title{{font-family:'Noto Serif SC','Songti SC',serif;font-size:2rem;line-height:1.06;letter-spacing:-.04em}}
+.app-sub{{margin-top:8px;font-size:.95rem;color:var(--ink-soft);line-height:1.7}}
+.app-actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}}
+.action{{display:inline-flex;align-items:center;justify-content:center;height:44px;padding:0 16px;border-radius:12px;border:1px solid var(--line-strong);background:rgba(255,255,255,.45);font-size:.95rem;font-weight:600}}
+.action.primary{{background:linear-gradient(135deg, #1f1a17 0%, #2d221c 100%);border-color:transparent;color:#fff8f2}}
+  .platform-wrap{{padding:24px 24px 26px}}
+  .ios-install{{margin-bottom:18px;padding:18px;border:1px solid rgba(24,20,18,.08);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,248,241,.78))}}
+  .ios-top{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}}
+  .ios-title{{font-size:1rem;font-weight:700}}
+  .ios-badge{{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;font-size:.78rem;font-weight:700;white-space:nowrap}}
+  .ios-badge-ok{{background:#d9f4e4;color:#17603d}}
+  .ios-badge-warn{{background:#f8ebc7;color:#8b6114}}
+  .ios-copy{{font-size:.9rem;line-height:1.7;color:rgba(24,20,18,.62)}}
+  .ios-steps{{margin-top:12px;padding-left:18px;color:rgba(24,20,18,.56);font-size:.84rem;line-height:1.7}}
+  .section-label{{margin-bottom:14px;font-size:.82rem;letter-spacing:.14em;color:rgba(24,20,18,.42);text-transform:uppercase}}
+.platforms{{display:flex;flex-direction:column;gap:12px}}
+.plat{{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid rgba(24,20,18,.08);border-radius:18px;background:rgba(255,252,248,.78);transition:transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease}}
+.plat:hover{{transform:translateY(-1px);border-color:rgba(24,20,18,.16);background:rgba(255,255,255,.92);box-shadow:0 16px 28px rgba(94,62,39,.08)}}
+.plat-icon{{width:48px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:14px;background:rgba(255,255,255,.66);border:1px solid rgba(24,20,18,.08)}}
+.plat-icon svg{{width:24px;height:24px;fill:currentColor;display:block}}
+.plat-icon-windows{{color:#1889d6}}
+.plat-icon-apple{{color:#181412}}
+.plat-icon-linux{{color:#3f6b4c}}
+.plat-icon-android{{color:#4f8f4b}}
+.plat-info{{flex:1;min-width:0}}
+.plat-name{{font-size:1rem;font-weight:700}}
+.plat-detail{{margin-top:4px;font-size:.86rem;color:rgba(24,20,18,.52);line-height:1.55}}
+.plat-badge{{display:inline-flex;align-items:center;justify-content:center;min-width:74px;height:40px;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#c97953,#e0a077);color:#fff8f2;font-size:.86rem;font-weight:700;white-space:nowrap}}
+.footnote{{margin-top:16px;font-size:.84rem;color:rgba(24,20,18,.48);line-height:1.7}}
+@media (max-width:1080px){{
+  .hero{{grid-template-columns:1fr}}
+}}
+@media (max-width:720px){{
+  .page{{padding:20px 20px 36px}}
+  .hero-copy,.hero-panel{{border-radius:20px}}
+  .hero-copy{{padding:26px}}
+  .app-top{{padding:22px 22px 16px}}
+  .platform-wrap{{padding:20px}}
+  .app-head{{align-items:flex-start}}
+  .icon{{width:68px;height:68px;border-radius:18px}}
+  .app-title{{font-size:1.6rem}}
+  .title{{font-size:clamp(2.8rem,14vw,4.4rem)}}
+}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="nav">
+    <a class="brand" href="/">
+      <img src="/assets/site-logo.jpg" alt="WebToApp">
+      <span>WebToApp</span>
+    </a>
+    <div class="brand-note">Download</div>
+  </div>
+
+  <main class="hero">
+    <section class="hero-copy">
+      <div class="eyebrow">INSTALLATION / 下载页</div>
+      <h1 class="title">{r['name']}</h1>
+      <div class="meta-row">
+        <span class="meta-chip">5 个平台已就绪</span>
+        <span class="meta-chip">真实图标已内置</span>
+        <span class="meta-chip">链接可直接分享</span>
+      </div>
+      <p class="desc">这不是一个市场页，只是这个网站的安装入口。选好你的设备，下载后就可以直接安装、解压，或者在 iPhone 上添加到主屏幕。</p>
+      <p class="source">{source_host}</p>
+    </section>
+
+    <section class="hero-panel">
+      <div class="app-top">
+        <div class="app-head">
+          <img src="{favicon}" alt="{r['name']}" class="icon" onerror="this.style.display='none'">
+          <div>
+            <h2 class="app-title">{r['name']}</h2>
+            <p class="app-sub">为当前站点生成的多端安装包与安装描述文件。你可以直接把这个页面发给用户，不需要再解释下载路径。</p>
+          </div>
+        </div>
+        <div class="app-actions">
+          <a class="action primary" href="{r['url']}" target="_blank" rel="noopener noreferrer">打开原站</a>
+          <a class="action" href="{base}/download/ios">下载 iPhone 描述文件</a>
+        </div>
+      </div>
+
+      <div class="platform-wrap">
+        <div class="ios-install">
+          <div class="ios-top">
+            <div class="ios-title">iPhone 安装说明</div>
+            {ios_badge}
+          </div>
+          <p class="ios-copy">iPhone 和 iPad 不需要单独跳去另一个页面。直接在 Safari 里下载描述文件，然后去设置里完成安装，桌面就会出现图标。</p>
+          <ol class="ios-steps">
+            <li>在 Safari 中点击上方或下方的 iPhone 安装入口</li>
+            <li>下载 <code>.mobileconfig</code> 描述文件</li>
+            <li>打开“设置”中的“已下载描述文件”并完成安装</li>
+            <li>回到桌面，点击图标即可打开</li>
+          </ol>
+        </div>
+        <p class="section-label">选择设备</p>
+        <div class="platforms">
+{platform_links}
+        </div>
+        <p class="footnote">iPhone 请在 Safari 中安装；桌面端下载后直接解压即可。Android 提供安装包，macOS 与 Windows 会保留应用图标。</p>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>"""
+        return html
+
+    # ===== PWA Files (for Android) =====
+    def _write_pwa_files(self, app_dir: Path, r: dict, launch_url: str):
+        # Prefer the locally-cached high-res icon for the manifest & meta tags.
+        icon_path = app_dir / "icon.png"
+        if icon_path.exists():
+            icon_url = f"/a/{r['id']}/icon.png"
+            icon_dim = self._png_dimension(icon_path.read_bytes()) or 256
+            icon_sizes = f"{icon_dim}x{icon_dim}"
+        else:
+            host = r["url"].split("//")[-1].split("/")[0]
+            icon_url = f"https://www.google.com/s2/favicons?domain={host}&sz=512"
+            icon_sizes = "512x512"
+
+        shell_start_url = f"/a/{r['id']}/pwa"
+        shell_scope = f"/a/{r['id']}/"
+
+        manifest = {
+            "name": r["name"], "short_name": r["name"][:12],
+            "start_url": shell_start_url, "scope": shell_scope, "display": self._normalized_display_mode(r.get("display")),
+            "orientation": r["orientation"],
+            "background_color": r["color"], "theme_color": r["color"],
+            "icons": [
+                {"src": icon_url, "sizes": icon_sizes, "type": "image/png", "purpose": "any maskable"},
+            ],
+        }
+        (app_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        cache = f"distill-{r['id']}-v1"
+        (app_dir / "sw.js").write_text(
+            f"const C='{cache}';"
+            "self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(['.'])));self.skipWaiting()});"
+            "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});"
+            "self.addEventListener('fetch',e=>{e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)))});"
+        )
+
+        pwa_html = f"""<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<meta name="theme-color" content="{r['color']}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="{icon_url}">
+<title>{r['name']}</title>
+<link rel="manifest" href="manifest.json">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+html,body{{width:100%;height:100%;overflow:hidden;background:{r['color']};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+body{{position:relative}}
+.shell{{position:relative;width:100%;height:100%}}
+iframe{{position:absolute;inset:0;width:100%;height:100%;border:none;overflow:hidden;background:#fff}}
+.loading{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(9,9,11,.18),rgba(9,9,11,.34));z-index:3;transition:opacity .2s ease}}
+.loading.hidden{{opacity:0;pointer-events:none}}
+.loading-card{{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px 22px;border-radius:18px;background:rgba(9,9,11,.68);color:#fff;border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(14px)}}
+.spinner{{width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;animation:spin 1s linear infinite}}
+.loading-title{{font-size:14px;font-weight:600}}
+.loading-sub{{font-size:12px;color:rgba(255,255,255,.7)}}
+.notice{{position:absolute;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));z-index:4;padding:16px;border-radius:18px;background:rgba(9,9,11,.82);border:1px solid rgba(255,255,255,.14);color:#fff;backdrop-filter:blur(16px);display:none}}
+.notice.show{{display:block}}
+.notice strong{{display:block;font-size:14px;margin-bottom:6px}}
+.notice p{{font-size:12px;line-height:1.55;color:rgba(255,255,255,.72)}}
+.notice-actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}}
+.btn{{display:inline-flex;align-items:center;justify-content:center;min-width:112px;height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#fff;text-decoration:none;font-size:12px;font-weight:600}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+</style>
+</head><body>
+<div class="shell">
+  <iframe
+    id="app-frame"
+    src="{launch_url}"
+    allow="fullscreen; clipboard-read; clipboard-write"
+    loading="eager"
+    referrerpolicy="no-referrer"
+    sandbox="allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-same-origin allow-scripts"
+  ></iframe>
+  <div id="loading" class="loading">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <div class="loading-title">正在打开 {r['name']}</div>
+      <div class="loading-sub">正在为你打开目标站点</div>
+    </div>
+  </div>
+  <div id="notice" class="notice">
+    <strong>这个站点无法在当前窗口直接显示</strong>
+    <p>部分站点会阻止 iframe 或要求系统浏览器完成登录、支付与跳转。遇到这种情况，请返回上一级，在网站预览窗口右上角使用完整打开。</p>
+    <div class="notice-actions">
+      <button id="retry-btn" class="btn" type="button">重新载入</button>
+    </div>
+  </div>
+</div>
+<script>
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+(function(){{
+  const frame = document.getElementById('app-frame');
+  const loading = document.getElementById('loading');
+  const notice = document.getElementById('notice');
+  const retryBtn = document.getElementById('retry-btn');
+  const launchUrl = {json.dumps(launch_url)};
+  let settled = false;
+  let timer = null;
+
+  function stopTimer(){{
+    if (timer) {{
+      clearTimeout(timer);
+      timer = null;
+    }}
+  }}
+
+  function showFallback(){{
+    if (settled) return;
+    loading.classList.add('hidden');
+    notice.classList.add('show');
+  }}
+
+  function armFallback(){{
+    settled = false;
+    loading.classList.remove('hidden');
+    notice.classList.remove('show');
+    stopTimer();
+    timer = window.setTimeout(showFallback, 6000);
+  }}
+
+  frame.addEventListener('load', function(){{
+    settled = true;
+    stopTimer();
+    loading.classList.add('hidden');
+    notice.classList.remove('show');
+  }});
+
+  frame.addEventListener('error', showFallback);
+  retryBtn.addEventListener('click', function(){{
+    armFallback();
+    frame.src = launchUrl + (launchUrl.indexOf('?') === -1 ? '?' : '&') + '_reload=' + Date.now();
+  }});
+
+  armFallback();
+}})();
+</script>
+</body></html>"""
+        (app_dir / "pwa.html").write_text(pwa_html)
+
+    # ===== Windows — .bat + .ico =====
+    def _build_windows(self, dl: Path, r: dict, icon_png, launch_url):
+        bat = f"""@echo off
+title {r['name']}
+set "URL={launch_url}"
+(where msedge >nul 2>&1) && (start "" msedge --app="%URL%" --new-window & exit /b)
+(where chrome >nul 2>&1) && (start "" chrome --app="%URL%" --new-window & exit /b)
+start "" "%URL%"
+"""
+        # VBS shortcut creator — auto-creates a desktop shortcut with the app icon
+        vbs = f"""Set ws = CreateObject("WScript.Shell")
+Set sc = ws.CreateShortcut(ws.SpecialFolders("Desktop") & "\\{r['name']}.lnk")
+sc.TargetPath = ws.CurrentDirectory & "\\{r['name']}.bat"
+sc.WorkingDirectory = ws.CurrentDirectory
+sc.IconLocation = ws.CurrentDirectory & "\\icon.ico"
+sc.Description = "{r['name']} - WebToApp"
+sc.Save
+WScript.Echo "桌面快捷方式已创建！"
+"""
+        with zipfile.ZipFile(dl / "windows.zip", 'w', zipfile.ZIP_DEFLATED) as z:
+            z.writestr(f"{r['name']}/{r['name']}.bat", bat)
+            z.writestr(f"{r['name']}/创建桌面快捷方式.vbs", vbs)
+            if icon_png:
+                z.writestr(f"{r['name']}/icon.ico", self._png_to_ico(icon_png))
+                z.writestr(f"{r['name']}/icon.png", icon_png)
+
+    # ===== macOS — .app bundle + .icns =====
+    def _build_macos(self, dl: Path, r: dict, icon_png, launch_url):
+        n = r['name']
+        launcher = f"""#!/bin/bash
+URL="{launch_url}"
+if [ -d "/Applications/Google Chrome.app" ]; then
+    open -na "Google Chrome" --args --app="$URL"
+elif [ -d "/Applications/Microsoft Edge.app" ]; then
+    open -na "Microsoft Edge" --args --app="$URL"
+else
+    open "$URL"
+fi
+"""
+        plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>launcher</string>
+<key>CFBundleName</key><string>{n}</string>
+<key>CFBundleIdentifier</key><string>com.webtoapp.{r['id']}</string>
+<key>CFBundleVersion</key><string>1.0</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+</dict></plist>"""
+        with zipfile.ZipFile(dl / "macos.zip", 'w', zipfile.ZIP_DEFLATED) as z:
+            info = zipfile.ZipInfo(f"{n}.app/Contents/MacOS/launcher")
+            info.external_attr = 0o755 << 16
+            z.writestr(info, launcher)
+            z.writestr(f"{n}.app/Contents/Info.plist", plist)
+            if icon_png:
+                z.writestr(f"{n}.app/Contents/Resources/AppIcon.icns", self._png_to_icns(icon_png))
+
+    # ===== Linux — .desktop + icon.png =====
+    def _build_linux(self, dl: Path, r: dict, icon_png, launch_url):
+        n = r['name']
+        # Icon path: relative to install location
+        icon_line = f"Icon=$HOME/.local/share/icons/{n}.png" if icon_png else "Icon=web-browser"
+        desktop = f"""[Desktop Entry]
+Type=Application
+Name={n}
+Comment=Distilled by WebToApp
+Exec=bash -c 'URL="{launch_url}"; for b in google-chrome chromium-browser microsoft-edge firefox; do command -v "$b" >/dev/null && exec "$b" --app="$URL"; done; xdg-open "$URL"'
+{icon_line}
+Terminal=false
+Categories=Network;WebBrowser;
+"""
+        # Install script — copies icon to standard location
+        install_sh = f"""#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+mkdir -p "$HOME/.local/share/icons"
+mkdir -p "$HOME/.local/share/applications"
+cp "$DIR/icon.png" "$HOME/.local/share/icons/{n}.png" 2>/dev/null
+cp "$DIR/{n}.desktop" "$HOME/.local/share/applications/"
+echo "✓ {n} 已安装到应用菜单"
+"""
+        tar_path = dl / "linux.tar.gz"
+        with tarfile.open(tar_path, 'w:gz') as t:
+            self._tar_add(t, f"{n}/{n}.desktop", desktop, 0o755)
+            self._tar_add(t, f"{n}/install.sh", install_sh, 0o755)
+            if icon_png:
+                info = tarfile.TarInfo(name=f"{n}/icon.png")
+                info.size = len(icon_png)
+                info.mode = 0o644
+                t.addfile(info, io.BytesIO(icon_png))
+
+    # ===== iOS — .mobileconfig (optionally CMS-signed "苹果免签") =====
+    def _build_ios(self, dl: Path, r: dict, icon_png, base_url: Optional[str] = None):
+        """Emit a Web Clip profile.
+
+        If `base_url` is provided, the Web Clip points at `{base_url}/a/{id}/launch`
+        so the server can later swap the target URL without re-installing.
+        Otherwise the Web Clip points directly at the recipe's URL.
+
+        If a signing cert is configured, the final file is a DER-encoded CMS
+        signature — iOS will show the signer's domain in place of the red
+        "未签名" warning. Otherwise a plain XML profile is written (still installs
+        fine on every iOS version; just shows "未签名").
+        """
+        uid1 = str(uuid.uuid5(uuid.NAMESPACE_URL, r['url'] + '.clip'))
+        uid2 = str(uuid.uuid5(uuid.NAMESPACE_URL, r['url'] + '.profile'))
+
+        # iOS stays on the lightweight launch route so the server only handles
+        # the initial open and target hot-swap, not the full browsing session.
+        web_clip_url = f"{base_url}/a/{r['id']}/launch" if base_url else r['url']
+        ios_fullscreen = self._feature_flag(
+            r.get("options"),
+            "feature-immersive-fullscreen",
+            "feature_immersive_fullscreen",
+            default=True,
+        )
+        full_screen_tag = "<true/>" if ios_fullscreen else "<false/>"
+
+        icon_tag = ""
+        if icon_png:
+            b64 = base64.b64encode(icon_png).decode()
+            icon_tag = f"<key>Icon</key><data>{b64}</data>"
+
+        mobileconfig = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>PayloadContent</key><array><dict>
+<key>FullScreen</key>{full_screen_tag}
+<key>IgnoreManifestScope</key><true/>
+<key>IsRemovable</key><true/>
+<key>Label</key><string>{r['name']}</string>
+{icon_tag}
+<key>PayloadDisplayName</key><string>{r['name']}</string>
+<key>PayloadIdentifier</key><string>com.webtoapp.{r['id']}.clip</string>
+<key>PayloadType</key><string>com.apple.webClip.managed</string>
+<key>PayloadUUID</key><string>{uid1}</string>
+<key>PayloadVersion</key><integer>1</integer>
+<key>URL</key><string>{web_clip_url}</string>
+</dict></array>
+<key>PayloadDisplayName</key><string>{r['name']}</string>
+<key>PayloadIdentifier</key><string>com.webtoapp.{r['id']}</string>
+<key>PayloadRemovalDisallowed</key><false/>
+<key>PayloadType</key><string>Configuration</string>
+<key>PayloadUUID</key><string>{uid2}</string>
+<key>PayloadVersion</key><integer>1</integer>
+</dict></plist>""".encode("utf-8")
+
+        signed_bytes, was_signed = mobileconfig_signer.sign_or_passthrough(mobileconfig)
+        (dl / "ios.mobileconfig").write_bytes(signed_bytes)
+        return {
+            "signed": was_signed,
+            "dynamic_url": bool(base_url),
+            "web_clip_url": web_clip_url,
+        }
+
+    # ===== Android — APK or PWA package =====
+    def _build_android(self, dl: Path, r: dict, icon_png, shell_url: str):
+        builder = ApkBuilder()
+        prefix = r.get("android_package_prefix") or config.android_package_prefix()
+        pkg = f"{prefix}.a{r['id']}"
+        apk_path = dl / "android.apk"
+        zip_path = dl / "android.zip"
+
+        if builder.build_apk(
+            str(apk_path),
+            shell_url,
+            r['name'],
+            pkg,
+            icon_png,
+            version_code=r.get("android_version_code", 1),
+            version_name=r.get("android_version_name", "1.0"),
+            feature_options=r.get("options") or {},
+            app_id=r['id'],
+        ):
+            # Real APK built; remove any stale fallback zip from previous attempts
+            if zip_path.exists():
+                zip_path.unlink()
+            return
+
+        # Fallback: generate PWA offline package
+        builder.build_fallback(str(zip_path), shell_url, r['name'], icon_png, r['color'])
+
+    def _normalized_display_mode(self, display):
+        raw = str(display or "").strip().lower()
+        if raw in {"fullscreen", "standalone", "minimal-ui", "browser"}:
+            return raw
+        return "fullscreen"
+
+    # ===== Helpers =====
+    def _tar_add(self, t, name, content, mode=0o644):
+        data = content.encode()
+        info = tarfile.TarInfo(name=name)
+        info.size = len(data)
+        info.mode = mode
+        t.addfile(info, io.BytesIO(data))
