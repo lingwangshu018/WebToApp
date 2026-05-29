@@ -1,6 +1,6 @@
 # WebToApp — ウェブサイトをアプリに
 
-[English](README.en.md) · [简体中文](README.md) · **日本語** · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](README.md) · [简体中文](README.zh.md) · **日本語** · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 URL を入力すると、数秒後にインストール・共有でき、アプリのように使える完成品が手に入ります。
 1 回の生成結果で **iPhone / iPad、Android、Windows、macOS、Linux** をまとめてカバーします。

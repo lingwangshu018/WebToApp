@@ -1,6 +1,6 @@
 # WebToApp — Transformez les sites web en applications
 
-[English](README.en.md) · [简体中文](README.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · **Français** · [Deutsch](README.de.md)
+[English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · **Français** · [Deutsch](README.de.md)
 
 Saisissez une URL et, quelques secondes plus tard, obtenez un produit fini que vous pouvez installer, partager et utiliser comme une application.
 Un seul résultat généré couvre **iPhone / iPad, Android, Windows, macOS et Linux**.

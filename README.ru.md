@@ -1,6 +1,6 @@
 # WebToApp — Превратите сайты в приложения
 
-[English](README.en.md) · [简体中文](README.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · **Русский** · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · **Русский** · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 Введите URL и через несколько секунд получите готовый продукт, который можно установить, отправить и использовать как приложение.
 Один результат генерации сразу охватывает **iPhone / iPad, Android, Windows, macOS и Linux**.

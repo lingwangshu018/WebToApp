@@ -36,17 +36,12 @@
   var TRANSLATIONS = {};
 
   function detect() {
+    // An explicit user choice (from the switcher) always wins and persists.
     try {
       var saved = window.localStorage.getItem(STORE_KEY);
       if (saved && SUPPORTED.indexOf(saved) !== -1) return saved;
     } catch (_e) { /* ignore */ }
-    var prefs = (navigator.languages && navigator.languages.length)
-      ? navigator.languages
-      : [navigator.language || 'en'];
-    for (var i = 0; i < prefs.length; i++) {
-      var base = String(prefs[i] || '').toLowerCase().split('-')[0];
-      if (SUPPORTED.indexOf(base) !== -1) return base;
-    }
+    // Otherwise default to English, regardless of the browser language.
     return 'en';
   }
 

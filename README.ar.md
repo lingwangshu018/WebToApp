@@ -2,7 +2,7 @@
 
 # WebToApp — حوّل المواقع إلى تطبيقات
 
-[English](README.en.md) · [简体中文](README.md) · [日本語](README.ja.md) · **العربية** · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · **العربية** · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 أدخل رابطًا، وخلال ثوانٍ تحصل على منتج نهائي يمكنك تثبيته ومشاركته واستخدامه كتطبيق.
 نتيجة واحدة مُولّدة تغطي **iPhone / iPad وAndroid وWindows وmacOS وLinux**.
