@@ -147,11 +147,14 @@
   let restoreIconDataUrl = '';
   let restoreIconLabel = '';
   let restoreIconFileName = '';
-  let restoreIconButtonLabel = '暂无可恢复图标';
+  let lastHistoryItems = [];
+  let restoreIconButtonLabel = '';
   let deviceFingerprint = '';
   const DEVICE_STORAGE_KEY = 'webtoapp-device-fingerprint-v1';
   const DEVICE_COOKIE_KEY = 'webtoapp_device_fingerprint';
-  const DEFAULT_VERSION_CODE_PLACEHOLDER = '留空则自动递增';
+  const t = (key, params) => (window.I18n ? window.I18n.t(key, params) : key);
+  const locale = () => (window.I18n ? window.I18n.locale() : 'en-US');
+  restoreIconButtonLabel = t('icon.noRestore');
 
   function normalizeFeatureOptions(raw) {
     const options = raw && typeof raw === 'object' ? raw : {};
@@ -284,10 +287,10 @@
   }
 
   function formatHistoryTime(value) {
-    if (!value) return '刚刚';
+    if (!value) return t('history.justNow');
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '刚刚';
-    return date.toLocaleString('zh-CN', {
+    if (Number.isNaN(date.getTime())) return t('history.justNow');
+    return date.toLocaleString(locale(), {
       year: 'numeric',
       month: 'numeric',
       day: 'numeric',
@@ -319,16 +322,16 @@
       customIconDataUrl = dataUrl;
       customIconPreview.src = dataUrl;
       customIconPreview.parentElement.classList.add('has-image');
-      customIconPlaceholder.textContent = label || '已回填图标';
+      customIconPlaceholder.textContent = label || t('icon.refilled');
       syncRestoreIconButton();
       return;
     }
     customIconDataUrl = '';
     customIconInput.value = '';
-    if (customIconFileName) customIconFileName.textContent = '未选择任何文件';
+    if (customIconFileName) customIconFileName.textContent = t('config.noFileChosen');
     customIconPreview.removeAttribute('src');
     customIconPreview.parentElement.classList.remove('has-image');
-    customIconPlaceholder.textContent = '自动抓取';
+    customIconPlaceholder.textContent = t('config.iconAutoFetch');
     syncRestoreIconButton();
   }
 
@@ -340,11 +343,11 @@
       return;
     }
     if (customIconDataUrl) {
-      customIconClearBtn.textContent = '清空图标';
+      customIconClearBtn.textContent = t('icon.clear');
       customIconClearBtn.disabled = false;
       return;
     }
-    customIconClearBtn.textContent = '暂无可恢复图标';
+    customIconClearBtn.textContent = t('icon.noRestore');
     customIconClearBtn.disabled = true;
   }
 
@@ -352,43 +355,29 @@
     restoreIconDataUrl = String(dataUrl || '').trim();
     restoreIconLabel = String(options.label || '').trim();
     restoreIconFileName = String(options.fileName || '').trim();
-    restoreIconButtonLabel = String(options.buttonLabel || '暂无可恢复图标').trim() || '暂无可恢复图标';
+    restoreIconButtonLabel = String(options.buttonLabel || t('icon.noRestore')).trim() || t('icon.noRestore');
     syncRestoreIconButton();
   }
 
   function nameSourceLabel(source) {
-    switch (String(source || '').trim()) {
-      case 'site_name':
-        return '站点名称元数据';
-      case 'application_name':
-        return '应用名称元数据';
-      case 'apple_mobile_web_app_title':
-        return '苹果 Web App 名称';
-      case 'title_host_match':
-        return '网页标题中的站点名';
-      case 'title_first_part':
-        return '网页标题';
-      case 'title_full':
-        return '网页标题';
-      case 'host_fallback':
-        return '域名';
-      default:
-        return '自动检测';
-    }
+    const key = String(source || '').trim();
+    const known = ['site_name', 'application_name', 'apple_mobile_web_app_title',
+      'title_host_match', 'title_first_part', 'title_full', 'host_fallback'];
+    return known.indexOf(key) !== -1 ? t('nameSource.' + key) : t('nameSource.default');
   }
 
   function updateAppNameSourceNote(source, suggestedName) {
     if (!appNameSourceNote) return;
     if (!suggestedName) {
-      appNameSourceNote.textContent = '分析后会自动填充名称与来源';
+      appNameSourceNote.textContent = t('config.appNameNote');
       return;
     }
     if (!source) {
-      appNameSourceNote.textContent = '当前名称已回填到编辑区';
+      appNameSourceNote.textContent = t('note.currentRefilled');
       return;
     }
     const label = nameSourceLabel(source);
-    appNameSourceNote.textContent = `已根据${label}自动填充`;
+    appNameSourceNote.textContent = t('note.filledBy', { source: label });
   }
 
   function syncInputValue(input, value) {
@@ -399,6 +388,7 @@
 
   function renderHistory(items) {
     const list = Array.isArray(items) ? items : [];
+    lastHistoryItems = list;
     historyList.innerHTML = '';
     historyEmpty.classList.toggle('hidden', list.length > 0);
     if (!list.length) return;
@@ -411,8 +401,8 @@
       const breakdown = item.visit_breakdown || {};
       const downloadBreakdown = item.download_breakdown || {};
       const downloadSummary = Object.entries(downloadBreakdown)
-        .map(([platform, count]) => `${platform} ${Number(count || 0).toLocaleString('zh-CN')}`)
-        .join(' · ') || '暂无';
+        .map(([platform, count]) => `${platform} ${Number(count || 0).toLocaleString(locale())}`)
+        .join(' · ') || t('history.none');
       const iconHtml = item.icon_url
         ? `<img class="history-icon" src="${escapeHtml(item.icon_url)}" alt="${escapeHtml(item.name || item.app_id)}">`
         : `<div class="history-icon" aria-hidden="true"></div>`;
@@ -428,40 +418,40 @@
             </div>
           </div>
           <div class="history-meta">
-            <span class="history-meta-chip">访问 ${Number(item.visit_count || 0).toLocaleString('zh-CN')} 次</span>
-            <span class="history-meta-chip">下载 ${Number(item.download_count || 0).toLocaleString('zh-CN')} 次</span>
-            <span class="history-meta-chip">更新于 ${escapeHtml(formatHistoryTime(item.updated_at))}</span>
-            <span class="history-meta-chip">目标 ${escapeHtml(targetUrl)}</span>
+            <span class="history-meta-chip">${escapeHtml(t('history.visits', { n: Number(item.visit_count || 0).toLocaleString(locale()) }))}</span>
+            <span class="history-meta-chip">${escapeHtml(t('history.downloads', { n: Number(item.download_count || 0).toLocaleString(locale()) }))}</span>
+            <span class="history-meta-chip">${escapeHtml(t('history.updatedAt', { time: formatHistoryTime(item.updated_at) }))}</span>
+            <span class="history-meta-chip">${escapeHtml(t('history.target', { url: targetUrl }))}</span>
           </div>
           <div class="history-breakdown">
             <div class="history-breakdown-row">
-              <span>下载页访问</span>
-              <strong>${Number(breakdown.landing || 0).toLocaleString('zh-CN')}</strong>
+              <span>${escapeHtml(t('history.rowLanding'))}</span>
+              <strong>${Number(breakdown.landing || 0).toLocaleString(locale())}</strong>
             </div>
             <div class="history-breakdown-row">
-              <span>iPhone 安装页</span>
-              <strong>${Number(breakdown.install || 0).toLocaleString('zh-CN')}</strong>
+              <span>${escapeHtml(t('history.rowInstall'))}</span>
+              <strong>${Number(breakdown.install || 0).toLocaleString(locale())}</strong>
             </div>
             <div class="history-breakdown-row">
-              <span>PWA 访问</span>
-              <strong>${Number(breakdown.pwa || 0).toLocaleString('zh-CN')}</strong>
+              <span>${escapeHtml(t('history.rowPwa'))}</span>
+              <strong>${Number(breakdown.pwa || 0).toLocaleString(locale())}</strong>
             </div>
             <div class="history-breakdown-row">
-              <span>桌面图标启动</span>
-              <strong>${Number(breakdown.launch || 0).toLocaleString('zh-CN')}</strong>
+              <span>${escapeHtml(t('history.rowLaunch'))}</span>
+              <strong>${Number(breakdown.launch || 0).toLocaleString(locale())}</strong>
             </div>
             <div class="history-breakdown-row history-breakdown-row-wide">
-              <span>平台下载</span>
+              <span>${escapeHtml(t('history.rowPlatform'))}</span>
               <strong>${escapeHtml(downloadSummary)}</strong>
             </div>
           </div>
         </div>
         <div class="history-actions">
-          <button class="history-action primary" type="button" data-open="${escapeHtml(publicPath)}">打开下载页</button>
-          <button class="history-action" type="button" data-regenerate="${escapeHtml(item.app_id || '')}">重新生成</button>
-          <button class="history-action" type="button" data-edit="${escapeHtml(item.app_id || '')}">回填到编辑区</button>
-          <button class="history-action" type="button" data-copy="${escapeHtml(publicPath)}">复制链接</button>
-          <button class="history-action history-action-danger" type="button" data-delete="${escapeHtml(item.app_id || '')}">从历史移除</button>
+          <button class="history-action primary" type="button" data-open="${escapeHtml(publicPath)}">${escapeHtml(t('history.openPage'))}</button>
+          <button class="history-action" type="button" data-regenerate="${escapeHtml(item.app_id || '')}">${escapeHtml(t('history.regenerate'))}</button>
+          <button class="history-action" type="button" data-edit="${escapeHtml(item.app_id || '')}">${escapeHtml(t('history.editForm'))}</button>
+          <button class="history-action" type="button" data-copy="${escapeHtml(publicPath)}">${escapeHtml(t('history.copyLink'))}</button>
+          <button class="history-action history-action-danger" type="button" data-delete="${escapeHtml(item.app_id || '')}">${escapeHtml(t('history.remove'))}</button>
         </div>
       `;
       fragment.appendChild(card);
@@ -527,8 +517,8 @@
     const previousVersionCode = sanitizeAndroidVersionCode(item.android_version_code || recipe.android_version_code || '');
     syncInputValue(androidVersionCodeInput, '');
     androidVersionCodeInput.placeholder = previousVersionCode
-      ? `${DEFAULT_VERSION_CODE_PLACEHOLDER}（上次 ${previousVersionCode}）`
-      : DEFAULT_VERSION_CODE_PLACEHOLDER;
+      ? t('versionCode.lastValue', { n: previousVersionCode })
+      : t('config.versionCodePlaceholder');
     syncInputValue(
       androidPackagePrefixInput,
       sanitizeAndroidPackagePrefix(item.android_package_prefix || recipe.android_package_prefix || 'com.webtoapp')
@@ -542,12 +532,12 @@
         const iconDataUrl = await readFileAsDataUrl(iconBlob);
         detectedIconDataUrl = '';
         setRestoreIconState(iconDataUrl, {
-          label: '已回填图标',
-          fileName: '已回填当前图标',
-          buttonLabel: '恢复当前图标',
+          label: t('icon.recovered'),
+          fileName: t('icon.recoveredFile'),
+          buttonLabel: t('icon.restoreCurrent'),
         });
-        fillIconPreview(iconDataUrl, '已回填图标');
-        if (customIconFileName) customIconFileName.textContent = '已回填当前图标';
+        fillIconPreview(iconDataUrl, t('icon.recovered'));
+        if (customIconFileName) customIconFileName.textContent = t('icon.recoveredFile');
       } catch (_err) {
         detectedIconDataUrl = '';
         setRestoreIconState('', {});
@@ -588,9 +578,9 @@
         options: options,
       }),
     });
-    if (!submitRes.ok) throw new Error('生成失败');
+    if (!submitRes.ok) throw new Error(t('err.generateFailed'));
     const task = await submitRes.json();
-    if (!task.task_id) throw new Error('任务提交失败');
+    if (!task.task_id) throw new Error(t('err.taskSubmitFailed'));
 
     let data = null;
     let attempts = 0;
@@ -600,9 +590,9 @@
       const pollRes = await fetch(`/api/distill/${encodeURIComponent(task.task_id)}`, {
         headers: apiHeaders(),
       });
-      if (pollRes.status === 404) throw new Error('任务不存在或已过期');
+      if (pollRes.status === 404) throw new Error(t('err.taskMissing'));
       if (!pollRes.ok) {
-        let message = '生成失败';
+        let message = t('err.generateFailed');
         try {
           const err = await pollRes.json();
           if (err && err.detail) message = String(err.detail);
@@ -616,7 +606,7 @@
       data = payload;
       break;
     }
-    if (!data) throw new Error('生成超时，请重试');
+    if (!data) throw new Error(t('err.generateTimeout'));
 
     const installLink = `${location.origin}${data.url}`;
     appLink.value = installLink;
@@ -647,17 +637,17 @@
     } catch (_err) {
       customIconDataUrl = '';
       customIconInput.value = '';
-      if (customIconFileName) customIconFileName.textContent = '读取失败';
+      if (customIconFileName) customIconFileName.textContent = t('icon.readFailed');
       customIconPreview.removeAttribute('src');
       customIconPreview.parentElement.classList.remove('has-image');
-      customIconPlaceholder.textContent = '读取失败';
+      customIconPlaceholder.textContent = t('icon.readFailed');
       syncRestoreIconButton();
     }
   });
   customIconClearBtn.addEventListener('click', () => {
     if (restoreIconDataUrl) {
-      fillIconPreview(restoreIconDataUrl, restoreIconLabel || '已恢复图标');
-      if (customIconFileName) customIconFileName.textContent = restoreIconFileName || '已恢复图标';
+      fillIconPreview(restoreIconDataUrl, restoreIconLabel || t('icon.recovered'));
+      if (customIconFileName) customIconFileName.textContent = restoreIconFileName || t('icon.recovered');
       syncRestoreIconButton();
       return;
     }
@@ -700,13 +690,19 @@
     currentUrl = url;
     workspace.classList.remove('hidden');
     resultPanel.classList.add('hidden');
-    analysisStatus.textContent = '分析中';
+    analysisStatus.textContent = t('analysis.statusAnalyzing');
     analysisStatus.className = 'status-badge';
-    analysisBody.innerHTML = '<div class="analysis-loader"><div class="loader-bar"></div><p id="loader-text">正在抓取页面...</p></div>';
+    analysisBody.innerHTML = `<div class="analysis-loader"><div class="loader-bar"></div><p id="loader-text">${escapeHtml(t('analysis.fetching'))}</p></div>`;
     scheduleGentleScroll(workspace, { block: 'start', threshold: 0.55, delay: 120 });
 
     // Simulate analysis steps
-    const steps = ['正在抓取页面...', '解析 DOM 结构...', '识别广告位与追踪脚本...', '提取设计系统 DNA...', '计算优化方案...'];
+    const steps = [
+      t('analysis.stepFetch'),
+      t('analysis.stepDom'),
+      t('analysis.stepAds'),
+      t('analysis.stepDesign'),
+      t('analysis.stepOptimize'),
+    ];
     for (let i = 0; i < steps.length; i++) {
       await sleep(600 + Math.random() * 400);
       const loader = document.getElementById('loader-text');
@@ -782,36 +778,36 @@
 
   function showRecoveredAnalysisResults(item) {
     const data = buildRecoveredAnalysisData(item || {});
-    analysisStatus.textContent = '已恢复';
+    analysisStatus.textContent = t('analysis.statusRecovered');
     analysisStatus.className = 'status-badge done';
     analysisBody.innerHTML = `
       <div class="analysis-results">
-        <div class="analysis-item"><span class="label">网站标题</span><span class="value info">${escapeHtml(data.title || '未保存')}</span></div>
-        <div class="analysis-item"><span class="label">建议名称</span><span class="value good">${escapeHtml(data.suggestedName || '未保存')}</span></div>
-        <div class="analysis-item"><span class="label">名称来源</span><span class="value info">${escapeHtml(data.suggestedNameSource ? nameSourceLabel(data.suggestedNameSource) : '历史构建')}</span></div>
-        <div class="analysis-item"><span class="label">图标状态</span><span class="value ${data.hasIcon ? 'good' : 'info'}">${data.hasIcon ? '已从历史恢复' : '历史中未保存图标'}</span></div>
-        <div class="analysis-item"><span class="label">目标地址</span><span class="value info">${escapeHtml(data.targetUrl || data.host || '未保存')}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.siteTitle'))}</span><span class="value info">${escapeHtml(data.title || t('analysis.notSaved'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.suggestedName'))}</span><span class="value good">${escapeHtml(data.suggestedName || t('analysis.notSaved'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.nameSource'))}</span><span class="value info">${escapeHtml(data.suggestedNameSource ? nameSourceLabel(data.suggestedNameSource) : t('analysis.fromHistory'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.iconStatus'))}</span><span class="value ${data.hasIcon ? 'good' : 'info'}">${escapeHtml(data.hasIcon ? t('analysis.iconRecovered') : t('analysis.iconNotSaved'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.targetUrl'))}</span><span class="value info">${escapeHtml(data.targetUrl || data.host || t('analysis.notSaved'))}</span></div>
       </div>
       <div class="analysis-actions">
-        <button id="reanalyze-btn" class="btn-secondary" type="button">重新分析</button>
+        <button id="reanalyze-btn" class="btn-secondary" type="button">${escapeHtml(t('analysis.reanalyze'))}</button>
       </div>`;
     const reanalyzeBtn = document.getElementById('reanalyze-btn');
     if (reanalyzeBtn) {
       reanalyzeBtn.addEventListener('click', async () => {
         reanalyzeBtn.disabled = true;
-        reanalyzeBtn.textContent = '分析中...';
+        reanalyzeBtn.textContent = t('analysis.reanalyzing');
         try {
           await startDistill();
         } finally {
           reanalyzeBtn.disabled = false;
-          reanalyzeBtn.textContent = '重新分析';
+          reanalyzeBtn.textContent = t('analysis.reanalyze');
         }
       });
     }
   }
 
   function showAnalysisResults(data) {
-    analysisStatus.textContent = '完成';
+    analysisStatus.textContent = t('analysis.statusDone');
     analysisStatus.className = 'status-badge done';
     const title = String(data.title || data.host || '').trim();
     const suggestedName = String(data.suggestedName || data.siteName || data.title || data.host || '').trim();
@@ -825,12 +821,12 @@
     if (data.faviconDataUrl) {
       detectedIconDataUrl = String(data.faviconDataUrl);
       setRestoreIconState(detectedIconDataUrl, {
-        label: '已自动抓取',
-        fileName: '已自动抓取网站图标',
-        buttonLabel: '恢复自动抓取',
+        label: t('icon.autoFetched'),
+        fileName: t('icon.autoFetchedFile'),
+        buttonLabel: t('icon.restoreAutoFetch'),
       });
-      fillIconPreview(String(data.faviconDataUrl), '已自动抓取');
-      if (customIconFileName) customIconFileName.textContent = '已自动抓取网站图标';
+      fillIconPreview(String(data.faviconDataUrl), t('icon.autoFetched'));
+      if (customIconFileName) customIconFileName.textContent = t('icon.autoFetchedFile');
     } else {
       detectedIconDataUrl = '';
       setRestoreIconState('', {});
@@ -839,32 +835,32 @@
 
     analysisBody.innerHTML = `
       <div class="analysis-results">
-        <div class="analysis-item"><span class="label">网站标题</span><span class="value info">${escapeHtml(title)}</span></div>
-        <div class="analysis-item"><span class="label">建议名称</span><span class="value good">${escapeHtml(suggestedName)}</span></div>
-        <div class="analysis-item"><span class="label">名称来源</span><span class="value info">${escapeHtml(suggestedNameSourceLabel)}</span></div>
-        <div class="analysis-item"><span class="label">图标状态</span><span class="value ${data.faviconDataUrl ? 'good' : 'info'}">${data.faviconDataUrl ? '已自动抓取' : '未检测到图标'}</span></div>
-        <div class="analysis-item"><span class="label">检测到广告</span><span class="value bad">${data.ads} 个广告位</span></div>
-        <div class="analysis-item"><span class="label">追踪脚本</span><span class="value bad">${data.trackers} 个追踪器</span></div>
-        <div class="analysis-item"><span class="label">弹窗覆盖</span><span class="value bad">${data.popups} 个弹窗</span></div>
-        <div class="analysis-item"><span class="label">原始大小</span><span class="value">${data.originalSize}</span></div>
-        <div class="analysis-item"><span class="label">蒸馏后大小</span><span class="value good">${data.distilledSize}</span></div>
-        <div class="analysis-item"><span class="label">预计加速</span><span class="value good">${data.speedBoost}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.siteTitle'))}</span><span class="value info">${escapeHtml(title)}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.suggestedName'))}</span><span class="value good">${escapeHtml(suggestedName)}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.nameSource'))}</span><span class="value info">${escapeHtml(suggestedNameSourceLabel)}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.iconStatus'))}</span><span class="value ${data.faviconDataUrl ? 'good' : 'info'}">${escapeHtml(data.faviconDataUrl ? t('analysis.iconAutoFetched') : t('analysis.iconNotDetected'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.adsDetected'))}</span><span class="value bad">${escapeHtml(t('analysis.adsUnit', { n: data.ads }))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.trackers'))}</span><span class="value bad">${escapeHtml(t('analysis.trackersUnit', { n: data.trackers }))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.popups'))}</span><span class="value bad">${escapeHtml(t('analysis.popupsUnit', { n: data.popups }))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.originalSize'))}</span><span class="value">${escapeHtml(String(data.originalSize))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.distilledSize'))}</span><span class="value good">${escapeHtml(String(data.distilledSize))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.speedBoost'))}</span><span class="value good">${escapeHtml(String(data.speedBoost))}</span></div>
       </div>`;
   }
 
   // --- Generate App ---
 
   generateBtn.addEventListener('click', async () => {
-    generateBtn.textContent = '⏳ 生成中...';
+    generateBtn.textContent = t('config.generating');
     generateBtn.disabled = true;
 
     try {
       await generateAppFromCurrentForm();
     } catch (e) {
-      alert('生成失败，请重试: ' + e.message);
+      alert(t('err.generateRetry', { msg: e.message }));
     }
 
-    generateBtn.textContent = '🚀 生成应用';
+    generateBtn.textContent = t('config.generateBtnEmoji');
     generateBtn.disabled = false;
   });
 
@@ -874,7 +870,7 @@
   copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(appLink.value).then(() => {
       const orig = copyBtn.textContent;
-      copyBtn.textContent = '已复制 ✓';
+      copyBtn.textContent = t('result.copied');
       setTimeout(() => copyBtn.textContent = orig, 2000);
     });
   });
@@ -904,14 +900,14 @@
       if (!item) return;
       try {
         target.disabled = true;
-        target.textContent = '生成中...';
+        target.textContent = t('history.regenerating');
         await applyHistoryItemToForm(item);
         await generateAppFromCurrentForm();
       } catch (_err) {
-        alert('重新生成失败，请重试');
+        alert(t('err.regenerateRetry'));
       } finally {
         target.disabled = false;
-        target.textContent = '重新生成';
+        target.textContent = t('history.regenerate');
       }
       return;
     }
@@ -919,26 +915,26 @@
       try {
         await navigator.clipboard.writeText(target.dataset.copy);
         const original = target.textContent;
-        target.textContent = '已复制';
+        target.textContent = t('history.copied');
         window.setTimeout(() => { target.textContent = original; }, 1600);
       } catch (_err) {
-        alert('复制失败，请手动复制链接');
+        alert(t('err.copyManual'));
       }
       return;
     }
     if (target.dataset.delete) {
-      if (!window.confirm('确定要从当前设备的历史记录中移除这个构建吗？')) return;
+      if (!window.confirm(t('history.confirmDelete'))) return;
       try {
         target.disabled = true;
         const res = await fetch(`/api/history/${encodeURIComponent(target.dataset.delete)}`, {
           method: 'DELETE',
           headers: { 'X-Device-Fingerprint': deviceFingerprint },
         });
-        if (!res.ok) throw new Error('删除失败');
+        if (!res.ok) throw new Error('delete failed');
         const data = await res.json();
         renderHistory((data.history && data.history.items) || []);
       } catch (_err) {
-        alert('移除失败，请重试');
+        alert(t('err.removeRetry'));
       } finally {
         target.disabled = false;
       }
@@ -950,7 +946,7 @@
       const res = await fetch('/api/history/export', {
         headers: { 'X-Device-Fingerprint': deviceFingerprint },
       });
-      if (!res.ok) throw new Error('导出失败');
+      if (!res.ok) throw new Error('export failed');
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const href = URL.createObjectURL(blob);
@@ -960,7 +956,7 @@
       link.click();
       URL.revokeObjectURL(href);
     } catch (_err) {
-      alert('导出失败，请重试');
+      alert(t('err.exportRetry'));
     }
   });
 
@@ -979,12 +975,12 @@
         headers: apiHeaders(),
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('导入失败');
+      if (!res.ok) throw new Error('import failed');
       const data = await res.json();
       renderHistory((data.history && data.history.items) || []);
-      alert(`导入完成：${data.imported} 条，恢复 ${data.restored} 条`);
+      alert(t('history.importDone', { imported: data.imported, restored: data.restored }));
     } catch (_err) {
-      alert('导入失败，请确认文件格式正确');
+      alert(t('err.importFormat'));
     } finally {
       historyImportInput.value = '';
     }
@@ -994,12 +990,12 @@
     historyRecoverBtn.addEventListener('click', async () => {
       const original = historyRecoverBtn.textContent;
       historyRecoverBtn.disabled = true;
-      historyRecoverBtn.textContent = '恢复中...';
+      historyRecoverBtn.textContent = t('history.recovering');
       try {
         const data = await recoverHistoryItems();
         renderHistory((data.history && data.history.items) || []);
       } catch (_err) {
-        alert('恢复失败，请重试');
+        alert(t('err.recoverRetry'));
       } finally {
         historyRecoverBtn.disabled = false;
         historyRecoverBtn.textContent = original;
@@ -1037,6 +1033,27 @@
       reader.readAsDataURL(file);
     });
   }
+
+  // --- Language switcher ---
+  (function initLanguageSwitcher() {
+    const select = document.getElementById('lang-select');
+    if (!select || !window.I18n) return;
+    window.I18n.supported.forEach((lang) => {
+      const opt = document.createElement('option');
+      opt.value = lang;
+      opt.textContent = window.I18n.nativeNames[lang] || lang;
+      select.appendChild(opt);
+    });
+    select.value = window.I18n.current;
+    select.addEventListener('change', () => {
+      window.I18n.setLanguage(select.value);
+    });
+    // Re-render dynamic (JS-generated) content whenever the language changes.
+    window.addEventListener('i18n:changed', () => {
+      select.value = window.I18n.current;
+      if (lastHistoryItems.length) renderHistory(lastHistoryItems);
+    });
+  })();
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
