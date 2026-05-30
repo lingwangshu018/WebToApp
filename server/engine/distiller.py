@@ -24,7 +24,7 @@ from urllib.request import urlopen, Request
 
 
 class Distiller:
-    DOWNLOAD_PAGE_MARKER = "<!-- WebToAppDownloadPage:v3 -->"
+    DOWNLOAD_PAGE_MARKER = "<!-- WebToAppDownloadPage:v4-i18n -->"
 
     _ANDROID_PACKAGE_PART_RE = re.compile(r"[^a-z0-9_]")
     _ANDROID_VERSION_NAME_RE = re.compile(r"[^0-9A-Za-z._-]")
@@ -471,46 +471,17 @@ class Distiller:
         cfg = app_dir / "downloads" / "ios.mobileconfig"
         ios_signed = cfg.exists() and cfg.read_bytes()[:1] == b"\x30"
         ios_badge = (
-            '<span class="ios-badge ios-badge-ok">已签名</span>'
+            '<span class="ios-badge ios-badge-ok" data-i18n="iosBadgeSigned">Signed</span>'
             if ios_signed else
-            '<span class="ios-badge ios-badge-warn">未签名，但仍可安装</span>'
+            '<span class="ios-badge ios-badge-warn" data-i18n="iosBadgeUnsigned">Unsigned, but still installable</span>'
         )
+        # (platform name, icon key, href, detail-i18n-key, action-i18n-key)
         platform_rows = [
-            (
-                "iPhone / iPad",
-                "apple",
-                f"{base}/download/ios",
-                ".mobileconfig · Safari 下载并安装描述文件",
-                "安装",
-            ),
-            (
-                "Android",
-                "android",
-                f"{base}/download/android",
-                ".apk / .zip · 直接安装或解压使用",
-                "下载",
-            ),
-            (
-                "macOS",
-                "apple",
-                f"{base}/download/macos",
-                ".zip · 原生 .app 图标 · 拖入应用文件夹",
-                "下载",
-            ),
-            (
-                "Windows",
-                "windows",
-                f"{base}/download/windows",
-                ".zip · 原生图标 · 解压即用",
-                "下载",
-            ),
-            (
-                "Linux",
-                "linux",
-                f"{base}/download/linux",
-                ".tar.gz · 桌面图标已内置 · 解压运行",
-                "下载",
-            ),
+            ("iPhone / iPad", "apple", f"{base}/download/ios", "platIosDetail", "actionInstall"),
+            ("Android", "android", f"{base}/download/android", "platAndroidDetail", "actionDownload"),
+            ("macOS", "apple", f"{base}/download/macos", "platMacDetail", "actionDownload"),
+            ("Windows", "windows", f"{base}/download/windows", "platWinDetail", "actionDownload"),
+            ("Linux", "linux", f"{base}/download/linux", "platLinuxDetail", "actionDownload"),
         ]
         platform_icons = {
             "windows": (
@@ -538,20 +509,25 @@ class Distiller:
             (
                 f'<a href="{href}" class="plat">'
                 f'<span class="plat-icon plat-icon-{icon_key}">{platform_icons[icon_key]}</span>'
-                f'<div class="plat-info"><div class="plat-name">{name}</div><div class="plat-detail">{detail}</div></div>'
-                f'<span class="plat-badge plat-dl">{action}</span>'
+                f'<div class="plat-info"><div class="plat-name">{name}</div>'
+                f'<div class="plat-detail" data-i18n="{detail_key}"></div></div>'
+                f'<span class="plat-badge plat-dl" data-i18n="{action_key}"></span>'
                 f'</a>'
             )
-            for name, icon_key, href, detail, action in platform_rows
+            for name, icon_key, href, detail_key, action_key in platform_rows
         )
+        # ---- i18n: in-page translations (visitor can switch; default English) ----
+        dl_i18n = self._download_page_translations()
+        dl_i18n_json = json.dumps(dl_i18n, ensure_ascii=False)
+        safe_name = (r["name"] or "").replace("\\", "\\\\").replace('"', '\\"')
         html = f"""{self.DOWNLOAD_PAGE_MARKER}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{r['name']} — 下载安装 | WebToApp</title>
-<meta name="description" content="为 {r['name']} 下载对应设备的安装包或安装描述文件。支持 iPhone、Android、Windows、macOS 和 Linux。">
+<title>{r['name']} — Download | WebToApp</title>
+<meta name="description" content="Download the installer or config profile of {r['name']} for your device. Works on iPhone, Android, Windows, macOS and Linux.">
 <meta name="theme-color" content="{r['color']}">
 <link rel="icon" href="/assets/site-logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -587,6 +563,9 @@ a{{color:inherit;text-decoration:none}}
 .brand{{display:inline-flex;align-items:center;gap:12px;font-size:1.15rem;font-weight:700}}
 .brand img{{display:block;width:28px;height:28px;border-radius:8px;object-fit:cover}}
 .brand-note{{font-size:.82rem;color:var(--ink-soft);letter-spacing:.14em;text-transform:uppercase}}
+.nav-right{{display:inline-flex;align-items:center;gap:14px}}
+#dl-lang{{appearance:none;-webkit-appearance:none;font:inherit;font-size:.9rem;color:var(--ink);background-color:rgba(255,251,246,.72);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23736357' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;border:1px solid var(--line-strong);border-radius:999px;padding:7px 32px 7px 14px;cursor:pointer}}
+[dir="rtl"] #dl-lang{{background-position:left 12px center;padding:7px 14px 7px 32px}}
 .hero{{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(420px,.98fr);gap:28px;align-items:stretch;padding-top:34px}}
 .hero-copy{{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:24px;padding:34px;background:linear-gradient(180deg, rgba(255,252,248,.78), rgba(255,248,241,.54));box-shadow:var(--shadow)}}
 .eyebrow{{margin-bottom:18px;font-size:.84rem;letter-spacing:.18em;color:rgba(24,20,18,.42);text-transform:uppercase}}
@@ -651,19 +630,22 @@ a{{color:inherit;text-decoration:none}}
       <img src="/assets/site-logo.jpg" alt="WebToApp">
       <span>WebToApp</span>
     </a>
-    <div class="brand-note">Download</div>
+    <div class="nav-right">
+      <span class="brand-note" data-i18n="navDownload">Download</span>
+      <select id="dl-lang" aria-label="Language"></select>
+    </div>
   </div>
 
   <main class="hero">
     <section class="hero-copy">
-      <div class="eyebrow">INSTALLATION / 下载页</div>
+      <div class="eyebrow" data-i18n="eyebrow">INSTALLATION / DOWNLOAD</div>
       <h1 class="title">{r['name']}</h1>
       <div class="meta-row">
-        <span class="meta-chip">5 个平台已就绪</span>
-        <span class="meta-chip">真实图标已内置</span>
-        <span class="meta-chip">链接可直接分享</span>
+        <span class="meta-chip" data-i18n="chipPlatforms">5 platforms ready</span>
+        <span class="meta-chip" data-i18n="chipIcons">Real icons built in</span>
+        <span class="meta-chip" data-i18n="chipShare">Link is shareable</span>
       </div>
-      <p class="desc">这不是一个市场页，只是这个网站的安装入口。选好你的设备，下载后就可以直接安装、解压，或者在 iPhone 上添加到主屏幕。</p>
+      <p class="desc" data-i18n="heroDesc">This is not an app store page, just this site's install entry. Pick your device, then download to install, unzip, or add to the iPhone home screen.</p>
       <p class="source">{source_host}</p>
     </section>
 
@@ -673,43 +655,340 @@ a{{color:inherit;text-decoration:none}}
           <img src="{favicon}" alt="{r['name']}" class="icon" onerror="this.style.display='none'">
           <div>
             <h2 class="app-title">{r['name']}</h2>
-            <p class="app-sub">为当前站点生成的多端安装包与安装描述文件。你可以直接把这个页面发给用户，不需要再解释下载路径。</p>
+            <p class="app-sub" data-i18n="appSub">The multi-platform installers and config profile generated for this site. You can send this page directly to users without explaining the download paths.</p>
           </div>
         </div>
         <div class="app-actions">
-          <a class="action primary" href="{r['url']}" target="_blank" rel="noopener noreferrer">打开原站</a>
-          <a class="action" href="{base}/download/ios">下载 iPhone 描述文件</a>
+          <a class="action primary" href="{r['url']}" target="_blank" rel="noopener noreferrer" data-i18n="openSite">Open original site</a>
+          <a class="action" href="{base}/download/ios" data-i18n="downloadIosProfile">Download iPhone profile</a>
         </div>
       </div>
 
       <div class="platform-wrap">
         <div class="ios-install">
           <div class="ios-top">
-            <div class="ios-title">iPhone 安装说明</div>
+            <div class="ios-title" data-i18n="iosTitle">iPhone install guide</div>
             {ios_badge}
           </div>
-          <p class="ios-copy">iPhone 和 iPad 不需要单独跳去另一个页面。直接在 Safari 里下载描述文件，然后去设置里完成安装，桌面就会出现图标。</p>
+          <p class="ios-copy" data-i18n="iosCopy">iPhone and iPad don't need a separate page. Download the profile right in Safari, then finish installing in Settings and the icon appears on your home screen.</p>
           <ol class="ios-steps">
-            <li>在 Safari 中点击上方或下方的 iPhone 安装入口</li>
-            <li>下载 <code>.mobileconfig</code> 描述文件</li>
-            <li>打开“设置”中的“已下载描述文件”并完成安装</li>
-            <li>回到桌面，点击图标即可打开</li>
+            <li data-i18n="iosStep1">In Safari, tap the iPhone install entry above or below</li>
+            <li data-i18n="iosStep2">Download the <code>.mobileconfig</code> profile</li>
+            <li data-i18n="iosStep3">Open "Profile Downloaded" in Settings and finish installing</li>
+            <li data-i18n="iosStep4">Return to the home screen and tap the icon to open</li>
           </ol>
         </div>
-        <p class="section-label">选择设备</p>
+        <p class="section-label" data-i18n="chooseDevice">Choose your device</p>
         <div class="platforms">
 {platform_links}
         </div>
-        <p class="footnote">iPhone 请在 Safari 中安装；桌面端下载后直接解压即可。Android 提供安装包，macOS 与 Windows 会保留应用图标。</p>
+        <p class="footnote" data-i18n="footnote">On iPhone install via Safari; on desktop just unzip after downloading. Android ships an installer, while macOS and Windows keep the app icon.</p>
       </div>
     </section>
   </main>
 </div>
+<script>
+(function(){{
+  var T = {dl_i18n_json};
+  var APP_NAME = "{safe_name}";
+  var SUPPORTED = ["en","zh","ja","ar","ru","es","pt","fr","de"];
+  var RTL = ["ar"];
+  var NAMES = {{en:"English",zh:"\\u4e2d\\u6587",ja:"\\u65e5\\u672c\\u8a9e",ar:"\\u0627\\u0644\\u0639\\u0631\\u0628\\u064a\\u0629",ru:"\\u0420\\u0443\\u0441\\u0441\\u043a\\u0438\\u0439",es:"Espa\\u00f1ol",pt:"Portugu\\u00eas",fr:"Fran\\u00e7ais",de:"Deutsch"}};
+  var KEY = "webtoapp-lang-v1";
+  function pick(){{
+    try{{ var s=localStorage.getItem(KEY); if(s&&SUPPORTED.indexOf(s)!==-1) return s; }}catch(e){{}}
+    return "en";
+  }}
+  var cur = pick();
+  function t(k){{ var tb=T[cur]||T.en||{{}}; return (tb[k]!=null)?tb[k]:((T.en||{{}})[k]!=null?T.en[k]:""); }}
+  function apply(){{
+    document.documentElement.lang = (cur==="zh")?"zh-CN":cur;
+    document.documentElement.dir = (RTL.indexOf(cur)!==-1)?"rtl":"ltr";
+    document.querySelectorAll("[data-i18n]").forEach(function(el){{
+      var v=t(el.getAttribute("data-i18n")); if(v) el.textContent=v;
+    }});
+    var titleT=t("pageTitle"); if(titleT) document.title=titleT.replace("{{name}}",APP_NAME);
+    try{{ localStorage.setItem(KEY,cur); }}catch(e){{}}
+  }}
+  var sel=document.getElementById("dl-lang");
+  SUPPORTED.forEach(function(l){{ var o=document.createElement("option"); o.value=l; o.textContent=NAMES[l]; sel.appendChild(o); }});
+  sel.value=cur;
+  sel.addEventListener("change",function(){{ cur=sel.value; apply(); }});
+  apply();
+}})();
+</script>
 </body>
 </html>"""
         return html
 
-    # ===== PWA Files (for Android) =====
+    def _download_page_translations(self) -> dict:
+        """Translation tables for the in-page language switcher on the download
+        page (9 languages). '{name}' in pageTitle is filled in by the page JS."""
+        return {
+            "en": {
+                "pageTitle": "{name} — Download | WebToApp",
+                "navDownload": "Download",
+                "eyebrow": "INSTALLATION / DOWNLOAD",
+                "chipPlatforms": "5 platforms ready",
+                "chipIcons": "Real icons built in",
+                "chipShare": "Link is shareable",
+                "heroDesc": "This is not an app store page, just this site's install entry. Pick your device, then download to install, unzip, or add to the iPhone home screen.",
+                "appSub": "The multi-platform installers and config profile generated for this site. You can send this page directly to users without explaining the download paths.",
+                "openSite": "Open original site",
+                "downloadIosProfile": "Download iPhone profile",
+                "iosTitle": "iPhone install guide",
+                "iosBadgeSigned": "Signed",
+                "iosBadgeUnsigned": "Unsigned, but still installable",
+                "iosCopy": "iPhone and iPad don't need a separate page. Download the profile right in Safari, then finish installing in Settings and the icon appears on your home screen.",
+                "iosStep1": "In Safari, tap the iPhone install entry above or below",
+                "iosStep2": "Download the .mobileconfig profile",
+                "iosStep3": "Open \u201cProfile Downloaded\u201d in Settings and finish installing",
+                "iosStep4": "Return to the home screen and tap the icon to open",
+                "chooseDevice": "Choose your device",
+                "footnote": "On iPhone install via Safari; on desktop just unzip after downloading. Android ships an installer, while macOS and Windows keep the app icon.",
+                "actionInstall": "Install",
+                "actionDownload": "Download",
+                "platIosDetail": ".mobileconfig \u00b7 download & install via Safari",
+                "platAndroidDetail": ".apk / .zip \u00b7 install directly or unzip",
+                "platMacDetail": ".zip \u00b7 native .app icon \u00b7 drag to Applications",
+                "platWinDetail": ".zip \u00b7 native icon \u00b7 unzip and run",
+                "platLinuxDetail": ".tar.gz \u00b7 desktop icon included \u00b7 unzip and run",
+            },
+            "zh": {
+                "pageTitle": "{name} — 下载安装 | WebToApp",
+                "navDownload": "下载",
+                "eyebrow": "INSTALLATION / 下载页",
+                "chipPlatforms": "5 个平台已就绪",
+                "chipIcons": "真实图标已内置",
+                "chipShare": "链接可直接分享",
+                "heroDesc": "这不是一个市场页，只是这个网站的安装入口。选好你的设备，下载后就可以直接安装、解压，或者在 iPhone 上添加到主屏幕。",
+                "appSub": "为当前站点生成的多端安装包与安装描述文件。你可以直接把这个页面发给用户，不需要再解释下载路径。",
+                "openSite": "打开原站",
+                "downloadIosProfile": "下载 iPhone 描述文件",
+                "iosTitle": "iPhone 安装说明",
+                "iosBadgeSigned": "已签名",
+                "iosBadgeUnsigned": "未签名，但仍可安装",
+                "iosCopy": "iPhone 和 iPad 不需要单独跳去另一个页面。直接在 Safari 里下载描述文件，然后去设置里完成安装，桌面就会出现图标。",
+                "iosStep1": "在 Safari 中点击上方或下方的 iPhone 安装入口",
+                "iosStep2": "下载 .mobileconfig 描述文件",
+                "iosStep3": "打开“设置”中的“已下载描述文件”并完成安装",
+                "iosStep4": "回到桌面，点击图标即可打开",
+                "chooseDevice": "选择设备",
+                "footnote": "iPhone 请在 Safari 中安装；桌面端下载后直接解压即可。Android 提供安装包，macOS 与 Windows 会保留应用图标。",
+                "actionInstall": "安装",
+                "actionDownload": "下载",
+                "platIosDetail": ".mobileconfig · Safari 下载并安装描述文件",
+                "platAndroidDetail": ".apk / .zip · 直接安装或解压使用",
+                "platMacDetail": ".zip · 原生 .app 图标 · 拖入应用文件夹",
+                "platWinDetail": ".zip · 原生图标 · 解压即用",
+                "platLinuxDetail": ".tar.gz · 桌面图标已内置 · 解压运行",
+            },
+            "ja": {
+                "pageTitle": "{name} — ダウンロード | WebToApp",
+                "navDownload": "ダウンロード",
+                "eyebrow": "INSTALLATION / ダウンロード",
+                "chipPlatforms": "5 プラットフォーム対応",
+                "chipIcons": "実アイコン内蔵",
+                "chipShare": "リンク共有可",
+                "heroDesc": "これはアプリストアのページではなく、このサイトのインストール入口です。デバイスを選び、ダウンロードしてインストール・解凍、または iPhone のホーム画面に追加してください。",
+                "appSub": "このサイト向けに生成したマルチプラットフォームのインストーラーと構成プロファイルです。このページをそのままユーザーに送れます。ダウンロード手順を説明する必要はありません。",
+                "openSite": "元のサイトを開く",
+                "downloadIosProfile": "iPhone プロファイルをダウンロード",
+                "iosTitle": "iPhone インストール手順",
+                "iosBadgeSigned": "署名済み",
+                "iosBadgeUnsigned": "未署名ですがインストール可能",
+                "iosCopy": "iPhone と iPad は別ページに移動する必要はありません。Safari でプロファイルをダウンロードし、設定でインストールを完了するとホーム画面にアイコンが表示されます。",
+                "iosStep1": "Safari で上または下の iPhone インストール入口をタップ",
+                "iosStep2": ".mobileconfig プロファイルをダウンロード",
+                "iosStep3": "設定の「ダウンロード済みプロファイル」を開いてインストールを完了",
+                "iosStep4": "ホーム画面に戻り、アイコンをタップして開く",
+                "chooseDevice": "デバイスを選択",
+                "footnote": "iPhone は Safari でインストール。デスクトップはダウンロード後に解凍するだけ。Android はインストーラー、macOS と Windows はアプリアイコンを保持します。",
+                "actionInstall": "インストール",
+                "actionDownload": "ダウンロード",
+                "platIosDetail": ".mobileconfig · Safari でダウンロードしてインストール",
+                "platAndroidDetail": ".apk / .zip · そのままインストールまたは解凍",
+                "platMacDetail": ".zip · ネイティブ .app アイコン · アプリケーションにドラッグ",
+                "platWinDetail": ".zip · ネイティブアイコン · 解凍して実行",
+                "platLinuxDetail": ".tar.gz · デスクトップアイコン内蔵 · 解凍して実行",
+            },
+            "ar": {
+                "pageTitle": "{name} — تنزيل | WebToApp",
+                "navDownload": "تنزيل",
+                "eyebrow": "INSTALLATION / التثبيت",
+                "chipPlatforms": "5 منصات جاهزة",
+                "chipIcons": "أيقونات حقيقية مدمجة",
+                "chipShare": "الرابط قابل للمشاركة",
+                "heroDesc": "هذه ليست صفحة متجر تطبيقات، بل مجرد مدخل التثبيت لهذا الموقع. اختر جهازك، ثم نزّل للتثبيت أو فك الضغط أو الإضافة إلى الشاشة الرئيسية في iPhone.",
+                "appSub": "حِزم التثبيت متعددة المنصات وملف التهيئة المُولّدة لهذا الموقع. يمكنك إرسال هذه الصفحة مباشرةً إلى المستخدمين دون شرح مسارات التنزيل.",
+                "openSite": "فتح الموقع الأصلي",
+                "downloadIosProfile": "تنزيل ملف تعريف iPhone",
+                "iosTitle": "دليل تثبيت iPhone",
+                "iosBadgeSigned": "موقّع",
+                "iosBadgeUnsigned": "غير موقّع، لكن قابل للتثبيت",
+                "iosCopy": "لا يحتاج iPhone وiPad إلى صفحة منفصلة. نزّل ملف التعريف مباشرةً في Safari، ثم أكمل التثبيت من الإعدادات وستظهر الأيقونة على الشاشة الرئيسية.",
+                "iosStep1": "في Safari، اضغط مدخل تثبيت iPhone أعلى أو أسفل",
+                "iosStep2": "نزّل ملف تعريف .mobileconfig",
+                "iosStep3": "افتح \u201cملف التعريف الذي تم تنزيله\u201d في الإعدادات وأكمل التثبيت",
+                "iosStep4": "ارجع إلى الشاشة الرئيسية واضغط الأيقونة لفتحه",
+                "chooseDevice": "اختر جهازك",
+                "footnote": "على iPhone ثبّت عبر Safari؛ على سطح المكتب فك الضغط بعد التنزيل. يوفّر Android حزمة تثبيت، بينما يحتفظ macOS وWindows بأيقونة التطبيق.",
+                "actionInstall": "تثبيت",
+                "actionDownload": "تنزيل",
+                "platIosDetail": ".mobileconfig · التنزيل والتثبيت عبر Safari",
+                "platAndroidDetail": ".apk / .zip · التثبيت مباشرةً أو فك الضغط",
+                "platMacDetail": ".zip · أيقونة .app أصلية · اسحبها إلى التطبيقات",
+                "platWinDetail": ".zip · أيقونة أصلية · فك الضغط والتشغيل",
+                "platLinuxDetail": ".tar.gz · أيقونة سطح المكتب مدمجة · فك الضغط والتشغيل",
+            },
+            "ru": {
+                "pageTitle": "{name} — Скачать | WebToApp",
+                "navDownload": "Скачать",
+                "eyebrow": "INSTALLATION / УСТАНОВКА",
+                "chipPlatforms": "5 платформ готовы",
+                "chipIcons": "Настоящие значки встроены",
+                "chipShare": "Ссылкой можно делиться",
+                "heroDesc": "Это не страница магазина приложений, а просто точка установки этого сайта. Выберите устройство, затем скачайте, чтобы установить, распаковать или добавить на главный экран iPhone.",
+                "appSub": "Кроссплатформенные установщики и профиль конфигурации, созданные для этого сайта. Эту страницу можно отправлять пользователям без объяснения путей загрузки.",
+                "openSite": "Открыть исходный сайт",
+                "downloadIosProfile": "Скачать профиль iPhone",
+                "iosTitle": "Инструкция по установке на iPhone",
+                "iosBadgeSigned": "Подписано",
+                "iosBadgeUnsigned": "Без подписи, но устанавливается",
+                "iosCopy": "Для iPhone и iPad не нужна отдельная страница. Скачайте профиль прямо в Safari, затем завершите установку в Настройках — значок появится на главном экране.",
+                "iosStep1": "В Safari нажмите точку установки iPhone выше или ниже",
+                "iosStep2": "Скачайте профиль .mobileconfig",
+                "iosStep3": "Откройте «Загруженный профиль» в Настройках и завершите установку",
+                "iosStep4": "Вернитесь на главный экран и нажмите значок, чтобы открыть",
+                "chooseDevice": "Выберите устройство",
+                "footnote": "На iPhone устанавливайте через Safari; на десктопе просто распакуйте после загрузки. Android поставляется с установщиком, а macOS и Windows сохраняют значок приложения.",
+                "actionInstall": "Установить",
+                "actionDownload": "Скачать",
+                "platIosDetail": ".mobileconfig · загрузка и установка через Safari",
+                "platAndroidDetail": ".apk / .zip · установка напрямую или распаковка",
+                "platMacDetail": ".zip · родной значок .app · перетащите в Программы",
+                "platWinDetail": ".zip · родной значок · распакуйте и запустите",
+                "platLinuxDetail": ".tar.gz · значок рабочего стола включён · распакуйте и запустите",
+            },
+            "es": {
+                "pageTitle": "{name} — Descargar | WebToApp",
+                "navDownload": "Descargar",
+                "eyebrow": "INSTALLATION / INSTALACIÓN",
+                "chipPlatforms": "5 plataformas listas",
+                "chipIcons": "Iconos reales incluidos",
+                "chipShare": "Enlace para compartir",
+                "heroDesc": "Esta no es una página de tienda de apps, solo la entrada de instalación de este sitio. Elige tu dispositivo y descarga para instalar, descomprimir o añadir a la pantalla de inicio del iPhone.",
+                "appSub": "Los instaladores multiplataforma y el perfil de configuración generados para este sitio. Puedes enviar esta página directamente a los usuarios sin explicar las rutas de descarga.",
+                "openSite": "Abrir sitio original",
+                "downloadIosProfile": "Descargar perfil de iPhone",
+                "iosTitle": "Guía de instalación en iPhone",
+                "iosBadgeSigned": "Firmado",
+                "iosBadgeUnsigned": "Sin firmar, pero instalable",
+                "iosCopy": "iPhone y iPad no necesitan otra página. Descarga el perfil en Safari, luego termina de instalar en Ajustes y el icono aparecerá en la pantalla de inicio.",
+                "iosStep1": "En Safari, toca la entrada de instalación de iPhone arriba o abajo",
+                "iosStep2": "Descarga el perfil .mobileconfig",
+                "iosStep3": "Abre \u201cPerfil descargado\u201d en Ajustes y termina de instalar",
+                "iosStep4": "Vuelve a la pantalla de inicio y toca el icono para abrir",
+                "chooseDevice": "Elige tu dispositivo",
+                "footnote": "En iPhone instala con Safari; en escritorio solo descomprime tras descargar. Android incluye un instalador, mientras que macOS y Windows conservan el icono de la app.",
+                "actionInstall": "Instalar",
+                "actionDownload": "Descargar",
+                "platIosDetail": ".mobileconfig · descarga e instala con Safari",
+                "platAndroidDetail": ".apk / .zip · instala directamente o descomprime",
+                "platMacDetail": ".zip · icono nativo .app · arrastra a Aplicaciones",
+                "platWinDetail": ".zip · icono nativo · descomprime y ejecuta",
+                "platLinuxDetail": ".tar.gz · icono de escritorio incluido · descomprime y ejecuta",
+            },
+            "pt": {
+                "pageTitle": "{name} — Baixar | WebToApp",
+                "navDownload": "Baixar",
+                "eyebrow": "INSTALLATION / INSTALAÇÃO",
+                "chipPlatforms": "5 plataformas prontas",
+                "chipIcons": "Ícones reais incluídos",
+                "chipShare": "Link compartilhável",
+                "heroDesc": "Esta não é uma página de loja de apps, apenas a entrada de instalação deste site. Escolha seu dispositivo e baixe para instalar, descompactar ou adicionar à tela inicial do iPhone.",
+                "appSub": "Os instaladores multiplataforma e o perfil de configuração gerados para este site. Você pode enviar esta página diretamente aos usuários sem explicar os caminhos de download.",
+                "openSite": "Abrir site original",
+                "downloadIosProfile": "Baixar perfil do iPhone",
+                "iosTitle": "Guia de instalação no iPhone",
+                "iosBadgeSigned": "Assinado",
+                "iosBadgeUnsigned": "Não assinado, mas instalável",
+                "iosCopy": "iPhone e iPad não precisam de outra página. Baixe o perfil no Safari, depois conclua a instalação em Ajustes e o ícone aparecerá na tela inicial.",
+                "iosStep1": "No Safari, toque na entrada de instalação do iPhone acima ou abaixo",
+                "iosStep2": "Baixe o perfil .mobileconfig",
+                "iosStep3": "Abra \u201cPerfil Baixado\u201d em Ajustes e conclua a instalação",
+                "iosStep4": "Volte à tela inicial e toque no ícone para abrir",
+                "chooseDevice": "Escolha seu dispositivo",
+                "footnote": "No iPhone instale via Safari; no desktop apenas descompacte após baixar. O Android traz um instalador, enquanto macOS e Windows mantêm o ícone do app.",
+                "actionInstall": "Instalar",
+                "actionDownload": "Baixar",
+                "platIosDetail": ".mobileconfig · baixe e instale via Safari",
+                "platAndroidDetail": ".apk / .zip · instale direto ou descompacte",
+                "platMacDetail": ".zip · ícone nativo .app · arraste para Aplicativos",
+                "platWinDetail": ".zip · ícone nativo · descompacte e execute",
+                "platLinuxDetail": ".tar.gz · ícone de desktop incluído · descompacte e execute",
+            },
+            "fr": {
+                "pageTitle": "{name} — Télécharger | WebToApp",
+                "navDownload": "Télécharger",
+                "eyebrow": "INSTALLATION / INSTALLATION",
+                "chipPlatforms": "5 plateformes prêtes",
+                "chipIcons": "Vraies icônes intégrées",
+                "chipShare": "Lien partageable",
+                "heroDesc": "Ce n'est pas une page de boutique d'applications, juste le point d'installation de ce site. Choisissez votre appareil, puis téléchargez pour installer, décompresser ou ajouter à l'écran d'accueil de l'iPhone.",
+                "appSub": "Les installateurs multiplateformes et le profil de configuration générés pour ce site. Vous pouvez envoyer cette page directement aux utilisateurs sans expliquer les chemins de téléchargement.",
+                "openSite": "Ouvrir le site d'origine",
+                "downloadIosProfile": "Télécharger le profil iPhone",
+                "iosTitle": "Guide d'installation iPhone",
+                "iosBadgeSigned": "Signé",
+                "iosBadgeUnsigned": "Non signé, mais installable",
+                "iosCopy": "iPhone et iPad n'ont pas besoin d'une page séparée. Téléchargez le profil dans Safari, puis terminez l'installation dans Réglages et l'icône apparaît sur l'écran d'accueil.",
+                "iosStep1": "Dans Safari, touchez l'entrée d'installation iPhone ci-dessus ou ci-dessous",
+                "iosStep2": "Téléchargez le profil .mobileconfig",
+                "iosStep3": "Ouvrez \u201cProfil téléchargé\u201d dans Réglages et terminez l'installation",
+                "iosStep4": "Revenez à l'écran d'accueil et touchez l'icône pour ouvrir",
+                "chooseDevice": "Choisissez votre appareil",
+                "footnote": "Sur iPhone, installez via Safari ; sur ordinateur, décompressez après le téléchargement. Android fournit un installateur, tandis que macOS et Windows conservent l'icône de l'app.",
+                "actionInstall": "Installer",
+                "actionDownload": "Télécharger",
+                "platIosDetail": ".mobileconfig · téléchargez et installez via Safari",
+                "platAndroidDetail": ".apk / .zip · installez directement ou décompressez",
+                "platMacDetail": ".zip · icône native .app · glissez vers Applications",
+                "platWinDetail": ".zip · icône native · décompressez et exécutez",
+                "platLinuxDetail": ".tar.gz · icône de bureau incluse · décompressez et exécutez",
+            },
+            "de": {
+                "pageTitle": "{name} — Herunterladen | WebToApp",
+                "navDownload": "Herunterladen",
+                "eyebrow": "INSTALLATION / INSTALLATION",
+                "chipPlatforms": "5 Plattformen bereit",
+                "chipIcons": "Echte Icons integriert",
+                "chipShare": "Link teilbar",
+                "heroDesc": "Dies ist keine App-Store-Seite, nur der Installationseinstieg dieser Website. Wähle dein Gerät und lade herunter, um zu installieren, zu entpacken oder zum iPhone-Startbildschirm hinzuzufügen.",
+                "appSub": "Die plattformübergreifenden Installer und das Konfigurationsprofil, die für diese Website erstellt wurden. Du kannst diese Seite direkt an Nutzer senden, ohne die Download-Pfade zu erklären.",
+                "openSite": "Originalseite öffnen",
+                "downloadIosProfile": "iPhone-Profil herunterladen",
+                "iosTitle": "iPhone-Installationsanleitung",
+                "iosBadgeSigned": "Signiert",
+                "iosBadgeUnsigned": "Unsigniert, aber installierbar",
+                "iosCopy": "iPhone und iPad brauchen keine separate Seite. Lade das Profil direkt in Safari herunter, schließe die Installation in den Einstellungen ab und das Icon erscheint auf dem Startbildschirm.",
+                "iosStep1": "Tippe in Safari oben oder unten auf den iPhone-Installationseinstieg",
+                "iosStep2": "Lade das .mobileconfig-Profil herunter",
+                "iosStep3": "Öffne \u201eGeladenes Profil\u201c in den Einstellungen und schließe die Installation ab",
+                "iosStep4": "Kehre zum Startbildschirm zurück und tippe auf das Icon zum Öffnen",
+                "chooseDevice": "Gerät auswählen",
+                "footnote": "Auf dem iPhone über Safari installieren; am Desktop nach dem Download einfach entpacken. Android liefert einen Installer, während macOS und Windows das App-Icon behalten.",
+                "actionInstall": "Installieren",
+                "actionDownload": "Herunterladen",
+                "platIosDetail": ".mobileconfig · über Safari herunterladen & installieren",
+                "platAndroidDetail": ".apk / .zip · direkt installieren oder entpacken",
+                "platMacDetail": ".zip · natives .app-Icon · in Programme ziehen",
+                "platWinDetail": ".zip · natives Icon · entpacken und ausführen",
+                "platLinuxDetail": ".tar.gz · Desktop-Icon enthalten · entpacken und ausführen",
+            },
+        }
+
+
     def _write_pwa_files(self, app_dir: Path, r: dict, launch_url: str):
         # Prefer the locally-cached high-res icon for the manifest & meta tags.
         icon_path = app_dir / "icon.png"
