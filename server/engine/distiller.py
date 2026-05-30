@@ -878,15 +878,31 @@ WScript.Echo "桌面快捷方式已创建！"
     # ===== macOS — .app bundle + .icns =====
     def _build_macos(self, dl: Path, r: dict, icon_png, launch_url):
         n = r['name']
+        # Prefer a Chromium-family browser's "app mode" (--app=URL), which opens
+        # a chromeless standalone window (no tabs, no address bar) — the closest
+        # thing to a native app on macOS. We probe a list of common Chromium
+        # browsers by bundle path. Safari has no chromeless CLI mode, so on a
+        # Safari-only Mac we fall back to a plain open (with browser chrome).
         launcher = f"""#!/bin/bash
 URL="{launch_url}"
-if [ -d "/Applications/Google Chrome.app" ]; then
-    open -na "Google Chrome" --args --app="$URL"
-elif [ -d "/Applications/Microsoft Edge.app" ]; then
-    open -na "Microsoft Edge" --args --app="$URL"
-else
-    open "$URL"
-fi
+CHROMIUM_APPS=(
+    "Google Chrome"
+    "Google Chrome Canary"
+    "Chromium"
+    "Microsoft Edge"
+    "Brave Browser"
+    "Vivaldi"
+    "Arc"
+    "Opera"
+)
+for app in "${{CHROMIUM_APPS[@]}}"; do
+    if [ -d "/Applications/$app.app" ] || [ -d "$HOME/Applications/$app.app" ]; then
+        open -na "$app" --args --app="$URL"
+        exit 0
+    fi
+done
+# No Chromium-family browser found: open in the default browser.
+open "$URL"
 """
         plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -959,13 +975,13 @@ echo "✓ {n} 已安装到应用菜单"
         # iOS stays on the lightweight launch route so the server only handles
         # the initial open and target hot-swap, not the full browsing session.
         web_clip_url = f"{base_url}/a/{r['id']}/launch" if base_url else r['url']
-        ios_fullscreen = self._feature_flag(
-            r.get("options"),
-            "feature-immersive-fullscreen",
-            "feature_immersive_fullscreen",
-            default=True,
-        )
-        full_screen_tag = "<true/>" if ios_fullscreen else "<false/>"
+        # A home-screen Web Clip must be FullScreen to launch as a standalone
+        # app (no Safari chrome / address bar). Without it, iOS treats the clip
+        # as a plain Safari bookmark and taps open the browser — exactly the
+        # "opens in the browser instead of a standalone window" bug users hit.
+        # Standalone is the baseline "app" behavior, so it is always on here and
+        # is NOT tied to the Android-only "immersive" toggle.
+        full_screen_tag = "<true/>"
 
         icon_tag = ""
         if icon_png:
