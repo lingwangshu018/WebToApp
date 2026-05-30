@@ -49,3 +49,4 @@ server/engine/_android_tools/
 # --- Debug APK samples (kept locally, never committed) ---
 /*.apk
 /*.APK
+/*.apk.*

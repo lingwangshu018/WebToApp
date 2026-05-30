@@ -785,6 +785,14 @@ class ApkBuilder:
                 "RSA",
                 "-keysize",
                 "2048",
+                # Self-signed cert signed with SHA1withRSA. Real-device testing
+                # showed AV engines flag the SHA256withRSA self-signed certs that
+                # modern toolchains (apksigner/keytool defaults) emit, while the
+                # older SHA1 cert signature (what MT Manager produces) is not
+                # flagged. This only affects the certificate's OWN signature; the
+                # v2/v3 APK content digests remain SHA-256.
+                "-sigalg",
+                "SHA1withRSA",
                 "-validity",
                 "36500",
                 "-storepass",
