@@ -111,20 +111,6 @@ APP_RETENTION_DAYS = 30
 APP_RETENTION_SWEEP_INTERVAL_SECONDS = 60 * 60
 RATE_LIMIT_BUCKET_TTL = 5 * 60  # forget IPs idle for this long
 
-_PWA_INLINE_OPEN_BUTTON_RE = re.compile(
-    r'\s*<div class="toolbar">\s*<a class="action" href=".*?">完整打开</a>\s*</div>',
-    re.S,
-)
-_PWA_INLINE_OPEN_CSS_RE = re.compile(
-    r'\s*\.toolbar\{\{.*?\}\}\s*\.action\{\{.*?\}\}',
-    re.S,
-)
-_PWA_NOTICE_OPEN_BUTTON_RE = re.compile(
-    r'\s*<a class="btn primary" href=".*?">完整打开</a>',
-    re.S,
-)
-
-
 def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -821,13 +807,6 @@ async def serve_pwa(app_id: str):
     if not pwa.exists():
         raise HTTPException(404)
     html = pwa.read_text()
-    html = _PWA_INLINE_OPEN_BUTTON_RE.sub("", html)
-    html = _PWA_INLINE_OPEN_CSS_RE.sub("", html)
-    html = _PWA_NOTICE_OPEN_BUTTON_RE.sub("", html)
-    html = html.replace(
-        "部分站点会阻止 iframe、强制新窗口、或要求系统浏览器完成登录与支付。遇到这种情况，直接完整打开会更稳定。",
-        "部分站点会阻止 iframe、强制新窗口、或要求系统浏览器完成登录与支付。遇到这种情况，请返回上一级，在网站预览窗口右上角使用完整打开。",
-    )
     history_store.record_visit(app_id, "pwa")
     return HTMLResponse(html)
 

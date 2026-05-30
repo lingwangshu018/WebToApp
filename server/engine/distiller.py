@@ -988,6 +988,74 @@ a{{color:inherit;text-decoration:none}}
             },
         }
 
+    def _pwa_translations(self) -> dict:
+        """Translations for the Android PWA shell page (loading + fallback
+        notice). '{name}' in loadingTitle is filled in by the page JS."""
+        return {
+            "en": {
+                "loadingTitle": "Opening {name}",
+                "loadingSub": "Loading the target site for you",
+                "noticeTitle": "This site can't be shown directly in this window",
+                "noticeBody": "Some sites block iframes or require the system browser to finish login, payment or redirects. If that happens, go back and use \u201cOpen full\u201d in the top-right of the site preview.",
+                "retry": "Reload",
+            },
+            "zh": {
+                "loadingTitle": "正在打开 {name}",
+                "loadingSub": "正在为你打开目标站点",
+                "noticeTitle": "这个站点无法在当前窗口直接显示",
+                "noticeBody": "部分站点会阻止 iframe 或要求系统浏览器完成登录、支付与跳转。遇到这种情况，请返回上一级，在网站预览窗口右上角使用完整打开。",
+                "retry": "重新载入",
+            },
+            "ja": {
+                "loadingTitle": "{name} を開いています",
+                "loadingSub": "対象サイトを読み込んでいます",
+                "noticeTitle": "このサイトはこのウィンドウで直接表示できません",
+                "noticeBody": "一部のサイトは iframe をブロックするか、ログイン・支払い・リダイレクトをシステムブラウザで完了するよう求めます。その場合は前の画面に戻り、サイトプレビュー右上の「フルで開く」を使ってください。",
+                "retry": "再読み込み",
+            },
+            "ar": {
+                "loadingTitle": "جارٍ فتح {name}",
+                "loadingSub": "جارٍ تحميل الموقع المستهدف لك",
+                "noticeTitle": "لا يمكن عرض هذا الموقع مباشرةً في هذه النافذة",
+                "noticeBody": "تحظر بعض المواقع إطارات iframe أو تتطلب متصفح النظام لإكمال تسجيل الدخول أو الدفع أو إعادة التوجيه. في هذه الحالة، ارجع واستخدم \u201cفتح كامل\u201d في أعلى يمين معاينة الموقع.",
+                "retry": "إعادة التحميل",
+            },
+            "ru": {
+                "loadingTitle": "Открываем {name}",
+                "loadingSub": "Загружаем целевой сайт для вас",
+                "noticeTitle": "Этот сайт нельзя показать прямо в этом окне",
+                "noticeBody": "Некоторые сайты блокируют iframe или требуют системный браузер для входа, оплаты или переходов. В этом случае вернитесь назад и используйте «Открыть полностью» в правом верхнем углу предпросмотра сайта.",
+                "retry": "Перезагрузить",
+            },
+            "es": {
+                "loadingTitle": "Abriendo {name}",
+                "loadingSub": "Cargando el sitio de destino para ti",
+                "noticeTitle": "Este sitio no se puede mostrar directamente en esta ventana",
+                "noticeBody": "Algunos sitios bloquean los iframes o requieren el navegador del sistema para completar el inicio de sesión, el pago o las redirecciones. Si ocurre, vuelve atrás y usa \u201cAbrir completo\u201d en la esquina superior derecha de la vista previa del sitio.",
+                "retry": "Recargar",
+            },
+            "pt": {
+                "loadingTitle": "Abrindo {name}",
+                "loadingSub": "Carregando o site de destino para você",
+                "noticeTitle": "Este site não pode ser exibido diretamente nesta janela",
+                "noticeBody": "Alguns sites bloqueiam iframes ou exigem o navegador do sistema para concluir login, pagamento ou redirecionamentos. Se isso acontecer, volte e use \u201cAbrir completo\u201d no canto superior direito da pré-visualização do site.",
+                "retry": "Recarregar",
+            },
+            "fr": {
+                "loadingTitle": "Ouverture de {name}",
+                "loadingSub": "Chargement du site cible pour vous",
+                "noticeTitle": "Ce site ne peut pas s'afficher directement dans cette fenêtre",
+                "noticeBody": "Certains sites bloquent les iframes ou exigent le navigateur système pour terminer la connexion, le paiement ou les redirections. Dans ce cas, revenez en arrière et utilisez \u201cOuvrir en entier\u201d en haut à droite de l'aperçu du site.",
+                "retry": "Recharger",
+            },
+            "de": {
+                "loadingTitle": "{name} wird geöffnet",
+                "loadingSub": "Die Zielseite wird für dich geladen",
+                "noticeTitle": "Diese Seite kann in diesem Fenster nicht direkt angezeigt werden",
+                "noticeBody": "Manche Seiten blockieren iframes oder verlangen den System-Browser für Login, Zahlung oder Weiterleitungen. Gehe in dem Fall zurück und nutze \u201eVollständig öffnen\u201c oben rechts in der Seitenvorschau.",
+                "retry": "Neu laden",
+            },
+        }
 
     def _write_pwa_files(self, app_dir: Path, r: dict, launch_url: str):
         # Prefer the locally-cached high-res icon for the manifest & meta tags.
@@ -1023,8 +1091,11 @@ a{{color:inherit;text-decoration:none}}
             "self.addEventListener('fetch',e=>{e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)))});"
         )
 
+        pwa_i18n = self._pwa_translations()
+        pwa_i18n_json = json.dumps(pwa_i18n, ensure_ascii=False)
+        safe_name = (r["name"] or "").replace("\\", "\\\\").replace('"', '\\"')
         pwa_html = f"""<!DOCTYPE html>
-<html lang="zh-CN"><head>
+<html lang="en"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
 <meta name="theme-color" content="{r['color']}">
@@ -1065,21 +1136,39 @@ iframe{{position:absolute;inset:0;width:100%;height:100%;border:none;overflow:hi
   <div id="loading" class="loading">
     <div class="loading-card">
       <div class="spinner"></div>
-      <div class="loading-title">正在打开 {r['name']}</div>
-      <div class="loading-sub">正在为你打开目标站点</div>
+      <div class="loading-title" id="loading-title"></div>
+      <div class="loading-sub" id="loading-sub"></div>
     </div>
   </div>
   <div id="notice" class="notice">
-    <strong>这个站点无法在当前窗口直接显示</strong>
-    <p>部分站点会阻止 iframe 或要求系统浏览器完成登录、支付与跳转。遇到这种情况，请返回上一级，在网站预览窗口右上角使用完整打开。</p>
+    <strong id="notice-title"></strong>
+    <p id="notice-body"></p>
     <div class="notice-actions">
-      <button id="retry-btn" class="btn" type="button">重新载入</button>
+      <button id="retry-btn" class="btn" type="button"></button>
     </div>
   </div>
 </div>
 <script>
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
 (function(){{
+  var T = {pwa_i18n_json};
+  var APP_NAME = "{safe_name}";
+  var SUPPORTED = ["en","zh","ja","ar","ru","es","pt","fr","de"];
+  var RTL = ["ar"];
+  var KEY = "webtoapp-lang-v1";
+  var cur = (function(){{
+    try{{ var s=localStorage.getItem(KEY); if(s&&SUPPORTED.indexOf(s)!==-1) return s; }}catch(e){{}}
+    return "en";
+  }})();
+  function t(k){{ var tb=T[cur]||T.en||{{}}; return (tb[k]!=null)?tb[k]:((T.en||{{}})[k]!=null?T.en[k]:""); }}
+  document.documentElement.lang = (cur==="zh")?"zh-CN":cur;
+  document.documentElement.dir = (RTL.indexOf(cur)!==-1)?"rtl":"ltr";
+  document.getElementById('loading-title').textContent = t('loadingTitle').replace("{{name}}", APP_NAME);
+  document.getElementById('loading-sub').textContent = t('loadingSub');
+  document.getElementById('notice-title').textContent = t('noticeTitle');
+  document.getElementById('notice-body').textContent = t('noticeBody');
+  document.getElementById('retry-btn').textContent = t('retry');
+
   const frame = document.getElementById('app-frame');
   const loading = document.getElementById('loading');
   const notice = document.getElementById('notice');
@@ -1087,6 +1176,7 @@ if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
   const launchUrl = {json.dumps(launch_url)};
   let settled = false;
   let timer = null;
+
 
   function stopTimer(){{
     if (timer) {{
