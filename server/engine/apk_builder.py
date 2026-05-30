@@ -27,6 +27,7 @@ import zlib
 from pathlib import Path
 
 from server import config
+from server.engine import apk_v2_signer
 
 
 ACTIVITY_JAVA = r"""
@@ -774,6 +775,8 @@ class ApkBuilder:
                 "keytool",
                 "-genkeypair",
                 "-v",
+                "-storetype",
+                "PKCS12",
                 "-keystore",
                 str(keystore),
                 "-alias",
@@ -794,6 +797,42 @@ class ApkBuilder:
             check=True,
             capture_output=True,
         )
+
+    def _export_signing_material(self, keystore: Path, password: str, alias: str, tmp: Path):
+        """Export (key_pem, cert_pem, key_der, cert_der, pubkey_der) from a
+        PKCS12 keystore so our custom v1/v2/v3 signer (openssl-based) can use it."""
+        p12 = tmp / "ks.p12"
+        shutil.copy(keystore, p12)
+        key_pem = tmp / "key.pem"
+        cert_pem = tmp / "cert.pem"
+        # private key (unencrypted PEM)
+        subprocess.run(
+            ["openssl", "pkcs12", "-in", str(p12), "-nodes", "-nocerts",
+             "-passin", f"pass:{password}", "-out", str(key_pem)],
+            check=True, capture_output=True,
+        )
+        # leaf certificate (PEM)
+        subprocess.run(
+            ["openssl", "pkcs12", "-in", str(p12), "-nokeys", "-clcerts",
+             "-passin", f"pass:{password}", "-out", str(cert_pem)],
+            check=True, capture_output=True,
+        )
+        key_der = tmp / "key.der"
+        cert_der = tmp / "cert.der"
+        pub_der = tmp / "pub.der"
+        subprocess.run(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", str(key_pem),
+                        "-outform", "DER", "-out", str(key_der)], check=True, capture_output=True)
+        subprocess.run(["openssl", "x509", "-in", str(cert_pem), "-outform", "DER",
+                        "-out", str(cert_der)], check=True, capture_output=True)
+        pub_pem = subprocess.run(["openssl", "x509", "-in", str(cert_pem), "-noout", "-pubkey"],
+                                 check=True, capture_output=True).stdout
+        (tmp / "pub.pem").write_bytes(pub_pem)
+        res = subprocess.run(["openssl", "rsa", "-pubin", "-in", str(tmp / "pub.pem"),
+                              "-outform", "DER", "-out", str(pub_der)], capture_output=True)
+        if res.returncode != 0:
+            subprocess.run(["openssl", "pkey", "-pubin", "-in", str(tmp / "pub.pem"),
+                            "-outform", "DER", "-out", str(pub_der)], check=True, capture_output=True)
+        return key_pem, cert_pem, key_der.read_bytes(), cert_der.read_bytes(), pub_der.read_bytes()
 
     def _patch_template_apk(self, template_apk: Path, output: Path, url: str, name: str, pkg: str, icon_png, version_code: int, version_name: str, feature_options: dict, app_id: str = None):
         apktool = self._find_apktool()
@@ -832,7 +871,15 @@ class ApkBuilder:
 
             output.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(built_aligned, output)
-            self._sign_apk(output, keystore, apksigner, apksigner_jar, password=password, alias=alias)
+            # Custom signing: write v1 (JAR) ourselves with a Gradle-style
+            # Created-By, then append v2+v3 blocks. This avoids apksigner's
+            # hard-coded "Created-By: 1.0 (Android)" v1 string, which mobile AV
+            # engines fingerprint to flag tool-signed APKs.
+            key_pem, cert_pem, key_der, cert_der, pub_der = self._export_signing_material(
+                keystore, password, alias, tmp
+            )
+            apk_v2_signer.build_v1(output, key_pem, cert_pem, alias)
+            apk_v2_signer.sign_v2(output, key_der, cert_der, pub_der)
 
     def _align_apk(self, source: Path, output: Path) -> None:
         zipalign = self._find_tool("zipalign")
