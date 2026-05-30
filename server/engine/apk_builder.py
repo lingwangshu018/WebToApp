@@ -705,17 +705,26 @@ class ApkBuilder:
         Android to accept reinstalls as in-place updates (same package name +
         same signer). Each app_id gets a distinct random key, so no two
         generated apps share a signing certificate.
+
+        The key *alias* is also randomized per app. apksigner derives the v1
+        (JAR) signature filenames from the alias (e.g. alias ``Ab3xK`` →
+        ``META-INF/AB3XK.SF`` / ``.RSA``), so a fixed alias would make every
+        generated APK share the same ``APP.SF``/``APP.RSA`` names — a uniform
+        pattern AV engines can fingerprint in bulk. A random alias gives each
+        app distinct META-INF filenames. The alias is persisted so rebuilds of
+        the same app_id keep stable filenames (filename changes don't affect
+        update-eligibility, which is keyed on the certificate, but keeping them
+        stable avoids churn).
         """
         safe_id = re.sub(r"[^a-z0-9_]", "", str(app_id or "").lower()) or "app"
         keystore = self.app_keys_dir / f"{safe_id}.keystore"
         meta_path = self.app_keys_dir / f"{safe_id}.json"
-        alias = "app"
         if keystore.exists() and meta_path.exists():
             try:
                 meta = json.loads(meta_path.read_text())
                 password = str(meta.get("password") or "")
-                stored_alias = str(meta.get("alias") or alias)
-                if password:
+                stored_alias = str(meta.get("alias") or "")
+                if password and stored_alias:
                     return keystore, password, stored_alias
             except Exception:
                 pass  # corrupt metadata: fall through and regenerate
@@ -723,11 +732,12 @@ class ApkBuilder:
         if keystore.exists():
             keystore.unlink()
         password = secrets.token_urlsafe(24)
+        alias = self._random_key_alias()
         self._generate_keystore(
             keystore=keystore,
             password=password,
             alias=alias,
-            dname=f"CN=WebToApp App {safe_id},O=WebToApp,C=CN",
+            dname=self._random_cert_dname(),
         )
         meta_path.write_text(json.dumps({"alias": alias, "password": password}, ensure_ascii=False))
         for path in (meta_path, keystore):
@@ -736,6 +746,26 @@ class ApkBuilder:
             except OSError:
                 pass
         return keystore, password, alias
+
+    @staticmethod
+    def _random_key_alias() -> str:
+        """A random, alpha-led alias (letters/digits). apksigner uppercases it
+        for the v1 META-INF/<ALIAS>.SF/.RSA filenames, so this randomizes those
+        names per app while staying a valid keystore alias."""
+        first = secrets.choice("abcdefghijklmnopqrstuvwxyz")
+        rest = "".join(
+            secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789")
+            for _ in range(secrets.randbelow(5) + 7)  # total length 8..12
+        )
+        return first + rest
+
+    @staticmethod
+    def _random_cert_dname() -> str:
+        """A neutral, randomized certificate subject. Avoids every generated
+        APK sharing an identical ``CN=WebToApp ...`` subject, which would be
+        another easy bulk-fingerprint signal for AV engines."""
+        cn = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(12))
+        return f"CN={cn}"
 
     def _generate_keystore(self, keystore: Path, password: str, alias: str, dname: str):
         keystore.parent.mkdir(parents=True, exist_ok=True)
