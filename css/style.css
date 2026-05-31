@@ -1463,6 +1463,39 @@ section {
   align-items: center;
 }
 
+.nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gh-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: var(--ink, #1e1914);
+  border: 1px solid rgba(30, 25, 20, 0.16);
+  background-color: rgba(255, 251, 246, 0.72);
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.gh-link:hover {
+  border-color: rgba(30, 25, 20, 0.32);
+  color: var(--accent, #c97953);
+}
+
+.gh-link:focus-visible {
+  outline: 2px solid var(--accent, #c97953);
+  outline-offset: 2px;
+}
+
+.gh-link svg {
+  display: block;
+}
+
 #lang-select {
   appearance: none;
   -webkit-appearance: none;

@@ -15,6 +15,7 @@
     'meta.ogDescription': 'Enter a link. Seconds later it can be installed, shared and used like an app.',
 
     'nav.langLabel': 'Language',
+    'nav.github': 'View source on GitHub',
 
     'hero.kicker': 'WEBTOAPP / WEBSITE TO APP',
     'hero.titleLine1': 'Turn websites',
@@ -175,6 +176,7 @@
     'meta.ogDescription': '输入一个网址，几秒钟后，它就能被安装、被分享，也能像应用一样被使用。',
 
     'nav.langLabel': '语言',
+    'nav.github': '在 GitHub 上查看源码',
 
     'hero.kicker': 'WEBTOAPP / 网站到应用',
     'hero.titleLine1': '把网站',
@@ -335,6 +337,7 @@
     'meta.ogDescription': 'リンクを入力。数秒後にはインストール・共有でき、アプリのように使えます。',
 
     'nav.langLabel': '言語',
+    'nav.github': 'GitHub でソースを見る',
 
     'hero.kicker': 'WEBTOAPP / ウェブからアプリへ',
     'hero.titleLine1': 'ウェブサイトを',
@@ -495,6 +498,7 @@
     'meta.ogDescription': 'أدخل رابطًا. خلال ثوانٍ يمكن تثبيته ومشاركته واستخدامه كتطبيق.',
 
     'nav.langLabel': 'اللغة',
+    'nav.github': 'عرض المصدر على GitHub',
 
     'hero.kicker': 'WEBTOAPP / من الموقع إلى التطبيق',
     'hero.titleLine1': 'حوّل المواقع',
@@ -655,6 +659,7 @@
     'meta.ogDescription': 'Введите ссылку. Через несколько секунд её можно установить, отправить и использовать как приложение.',
 
     'nav.langLabel': 'Язык',
+    'nav.github': 'Открыть исходный код на GitHub',
 
     'hero.kicker': 'WEBTOAPP / САЙТ В ПРИЛОЖЕНИЕ',
     'hero.titleLine1': 'Превратите сайты',
@@ -815,6 +820,7 @@
     'meta.ogDescription': 'Introduce un enlace. En segundos se puede instalar, compartir y usar como una app.',
 
     'nav.langLabel': 'Idioma',
+    'nav.github': 'Ver el código en GitHub',
 
     'hero.kicker': 'WEBTOAPP / DEL SITIO A LA APP',
     'hero.titleLine1': 'Convierte sitios web',
@@ -975,6 +981,7 @@
     'meta.ogDescription': 'Insira um link. Em segundos ele pode ser instalado, compartilhado e usado como um app.',
 
     'nav.langLabel': 'Idioma',
+    'nav.github': 'Ver o código no GitHub',
 
     'hero.kicker': 'WEBTOAPP / DO SITE AO APP',
     'hero.titleLine1': 'Transforme sites',
@@ -1135,6 +1142,7 @@
     'meta.ogDescription': 'Saisissez un lien. En quelques secondes, il peut être installé, partagé et utilisé comme une application.',
 
     'nav.langLabel': 'Langue',
+    'nav.github': 'Voir le code sur GitHub',
 
     'hero.kicker': 'WEBTOAPP / DU SITE À L\u2019APPLI',
     'hero.titleLine1': 'Transformez les sites web',
@@ -1295,6 +1303,7 @@
     'meta.ogDescription': 'Gib einen Link ein. Sekunden später lässt er sich installieren, teilen und wie eine App nutzen.',
 
     'nav.langLabel': 'Sprache',
+    'nav.github': 'Quellcode auf GitHub ansehen',
 
     'hero.kicker': 'WEBTOAPP / VON DER WEBSITE ZUR APP',
     'hero.titleLine1': 'Websites in',
