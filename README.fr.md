@@ -1,11 +1,33 @@
-# WebToApp — Transformez les sites web en applications
+<div align="center">
+
+<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+
+# WebToApp
+
+**Transformez n'importe quel site web en application installable, en quelques secondes.**
+
+Un lien en entrée, des produits finis pour **iPhone / iPad · Android · Windows · macOS · Linux**.
+
+[![Démo](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
+[![Licence : MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![Plateformes](https://img.shields.io/badge/Plateformes-5-736357?style=for-the-badge)](#features)
 
 [English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · **Français** · [Deutsch](README.de.md)
+
+</div>
+
+---
+
+<div align="center">
+  <img src="assets/screenshot.png" alt="WebToApp" width="860">
+</div>
+
+---
 
 Saisissez une URL et, quelques secondes plus tard, obtenez un produit fini que vous pouvez installer, partager et utiliser comme une application.
 Un seul résultat généré couvre **iPhone / iPad, Android, Windows, macOS et Linux**.
 
-Open source · Gratuit · Sans inscription.
+Open source · Gratuit · Sans inscription. Essayez-le en direct sur **[shiaho.sbs](https://shiaho.sbs)**.
 
 ---
 

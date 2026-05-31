@@ -1,11 +1,33 @@
-# WebToApp — 把网站做成应用
+<div align="center">
+
+<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+
+# WebToApp
+
+**几秒钟把任意网站变成可安装的应用。**
+
+输入一个链接，输出覆盖 **iPhone / iPad · Android · Windows · macOS · Linux** 的成品。
+
+[![在线演示](https://img.shields.io/badge/在线演示-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
+[![许可证: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![平台](https://img.shields.io/badge/平台-5-736357?style=for-the-badge)](#功能)
 
 [English](README.md) · **简体中文** · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
+</div>
+
+---
+
+<div align="center">
+  <img src="assets/screenshot.png" alt="WebToApp 截图" width="860">
+</div>
+
+---
 
 输入一个网址，几秒钟后得到一个可以安装、可以分享、可以像应用一样使用的成品。
 一套生成结果同时覆盖 **iPhone / iPad、Android、Windows、macOS、Linux**。
 
-开源 · 免费 · 无需登录。
+开源 · 免费 · 无需登录。在线体验：**[shiaho.sbs](https://shiaho.sbs)**。
 
 ---
 

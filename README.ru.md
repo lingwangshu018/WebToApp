@@ -1,11 +1,33 @@
-# WebToApp — Превратите сайты в приложения
+<div align="center">
+
+<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+
+# WebToApp
+
+**Превратите любой сайт в устанавливаемое приложение за секунды.**
+
+Одна ссылка на входе — готовые продукты для **iPhone / iPad · Android · Windows · macOS · Linux**.
+
+[![Демо](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
+[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![Платформы](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#features)
 
 [English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · **Русский** · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
+</div>
+
+---
+
+<div align="center">
+  <img src="assets/screenshot.png" alt="WebToApp" width="860">
+</div>
+
+---
 
 Введите URL и через несколько секунд получите готовый продукт, который можно установить, отправить и использовать как приложение.
 Один результат генерации сразу охватывает **iPhone / iPad, Android, Windows, macOS и Linux**.
 
-Открытый код · Бесплатно · Без регистрации.
+Открытый код · Бесплатно · Без регистрации. Демо: **[shiaho.sbs](https://shiaho.sbs)**.
 
 ---
 

@@ -1,13 +1,31 @@
-<div dir="rtl">
+<div align="center">
 
-# WebToApp — حوّل المواقع إلى تطبيقات
+<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+
+# WebToApp
+
+**حوّل أي موقع إلى تطبيق قابل للتثبيت خلال ثوانٍ.**
+
+رابط واحد، ومنتجات نهائية لـ **iPhone / iPad · Android · Windows · macOS · Linux**.
+
+[![عرض مباشر](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
+[![الرخصة: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![المنصات](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#الميزات)
 
 [English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · **العربية** · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
+<img src="assets/screenshot.png" alt="WebToApp" width="860">
+
+</div>
+
+---
+
+<div dir="rtl">
 
 أدخل رابطًا، وخلال ثوانٍ تحصل على منتج نهائي يمكنك تثبيته ومشاركته واستخدامه كتطبيق.
 نتيجة واحدة مُولّدة تغطي **iPhone / iPad وAndroid وWindows وmacOS وLinux**.
 
-مفتوح المصدر · مجاني · بدون تسجيل.
+مفتوح المصدر · مجاني · بدون تسجيل. جرّبه مباشرة على **[shiaho.sbs](https://shiaho.sbs)**.
 
 ---
 

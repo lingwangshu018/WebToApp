@@ -1,11 +1,33 @@
-# WebToApp — ウェブサイトをアプリに
+<div align="center">
+
+<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+
+# WebToApp
+
+**ウェブサイトを数秒でインストール可能なアプリに。**
+
+リンクを 1 つ入力すると、**iPhone / iPad · Android · Windows · macOS · Linux** 向けの完成品が手に入ります。
+
+[![ライブデモ](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
+[![ライセンス: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![プラットフォーム](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#features)
 
 [English](README.md) · [简体中文](README.zh.md) · **日本語** · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
+</div>
+
+---
+
+<div align="center">
+  <img src="assets/screenshot.png" alt="WebToApp スクリーンショット" width="860">
+</div>
+
+---
 
 URL を入力すると、数秒後にインストール・共有でき、アプリのように使える完成品が手に入ります。
 1 回の生成結果で **iPhone / iPad、Android、Windows、macOS、Linux** をまとめてカバーします。
 
-オープンソース · 無料 · 登録不要。
+オープンソース · 無料 · 登録不要。ライブデモ：**[shiaho.sbs](https://shiaho.sbs)**。
 
 ---
 
