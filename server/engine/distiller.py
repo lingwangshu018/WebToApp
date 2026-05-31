@@ -6,6 +6,7 @@ Each platform gets a real, installable, few-KB launcher with proper app icon.
 import json
 import re
 import uuid
+import secrets
 import zipfile
 import tarfile
 import struct
@@ -46,8 +47,22 @@ class Distiller:
             "android_package_prefix": package_prefix,
             "_custom_icon_data_url": self._custom_icon_data_url(options),
             "custom_icon_uploaded": bool(self._custom_icon_data_url(options)),
+            "edit_token": self._edit_token(app_id),
             "options": feature_options,
         }
+
+    def _edit_token(self, app_id):
+        """Secret token gating URL hot-swaps for this app. Stable per app_id:
+        we reuse the existing token on rebuild so the original creator keeps
+        control, and only mint a fresh one for a brand-new app."""
+        recipe_path = self._generated_root() / app_id / "recipe.json"
+        try:
+            existing = json.loads(recipe_path.read_text()).get("edit_token")
+            if isinstance(existing, str) and existing:
+                return existing
+        except Exception:
+            pass
+        return secrets.token_urlsafe(24)
 
     def _android_version_code(self, app_id, options):
         raw = options.get("android-version-code")

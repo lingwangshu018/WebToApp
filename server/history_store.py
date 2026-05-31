@@ -119,6 +119,9 @@ class HistoryStore:
     def _snapshot_from_recipe(self, recipe: dict, public_path: str, runtime_url: Optional[str]) -> dict:
         safe_recipe = deepcopy(recipe)
         safe_recipe.pop("_custom_icon_data_url", None)
+        # edit_token is a secret that gates URL hot-swaps; it must never travel
+        # in history snapshots (served via /api/history and export/import).
+        safe_recipe.pop("edit_token", None)
         return {
             "app_id": recipe.get("id"),
             "name": recipe.get("name") or recipe.get("id"),

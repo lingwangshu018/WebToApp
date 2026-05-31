@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -41,7 +42,9 @@ _LONG_CACHE_SUFFIXES = (".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg",
 # Paths that must never be reachable through the catch-all StaticFiles mount,
 # which is rooted at the whole project dir. Signing keystores, server source
 # and cert material live under these — serving them would leak private keys.
-_BLOCKED_STATIC_PREFIXES = ("/certs", "/server", "/.git", "/deploy")
+# ``/generated`` holds per-app recipe.json files (which carry the secret
+# edit_token); they must only be reached via the curated /a/{id}/... routes.
+_BLOCKED_STATIC_PREFIXES = ("/certs", "/server", "/.git", "/deploy", "/generated")
 _BLOCKED_STATIC_SUFFIXES = (".keystore", ".jks", ".pem", ".key", ".p12", ".pfx")
 
 
@@ -309,6 +312,7 @@ def _resolve_base_url(request: Request) -> str:
 def _public_recipe(recipe: dict) -> dict:
     safe = dict(recipe)
     safe.pop("_custom_icon_data_url", None)
+    safe.pop("edit_token", None)
     return safe
 
 
@@ -353,20 +357,6 @@ def _import_recipe_from_payload(item: dict) -> dict:
     return normalized
 
 
-def _recipe_needs_restore(existing: dict, imported: dict) -> bool:
-    keys = [
-        "url",
-        "name",
-        "color",
-        "display",
-        "orientation",
-        "android_version_code",
-        "android_version_name",
-        "android_package_prefix",
-    ]
-    return any(existing.get(key) != imported.get(key) for key in keys)
-
-
 def _build_distill_response(payload: dict) -> dict:
     app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
     recipe = distiller.create_recipe(
@@ -391,6 +381,7 @@ def _build_distill_response(payload: dict) -> dict:
         "app_id": app_id,
         "url": f"/a/{app_id}",
         "recipe": _public_recipe(recipe),
+        "edit_token": recipe.get("edit_token"),
         "ios": build_meta.get("ios", {}),
         "runtime_url": build_meta.get("runtime_url"),
         "signing_available": mobileconfig_signer.can_sign(),
@@ -519,19 +510,37 @@ async def distill_task_status(task_id: str):
 
 class UpdateUrlRequest(BaseModel):
     url: str
+    edit_token: Optional[str] = None
 
 
 @app.patch("/api/app/{app_id}/url")
-async def update_app_url(app_id: str, body: UpdateUrlRequest):
+async def update_app_url(app_id: str, body: UpdateUrlRequest, request: Request):
     """Hot-swap the target URL of an already-installed Web Clip.
     Users don't need to reinstall — their Web Clip still points at our /launch
-    endpoint, which now redirects to the new URL."""
+    endpoint, which now redirects to the new URL.
+
+    Authorization: the caller must present the app's ``edit_token`` (returned
+    only to the creator in the /api/distill response). Without it, anyone who
+    guessed the 8-char app_id could redirect a victim's installed app to a
+    phishing site, so a missing/incorrect token is rejected."""
     recipe_path = APPS_DIR / app_id / "recipe.json"
     if not recipe_path.exists():
         raise HTTPException(404, "App not found")
     recipe = json.loads(recipe_path.read_text())
+
+    expected = str(recipe.get("edit_token") or "")
+    supplied = str(body.edit_token or request.headers.get("x-edit-token", "") or "")
+    # Constant-time compare; reject if the app has no token or the token is wrong.
+    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(403, "Invalid or missing edit token")
+
+    new_url = str(body.url or "").strip()
+    parsed = urlparse(new_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(422, "URL must be an absolute http(s) URL")
+
     old_url = recipe.get("url")
-    recipe["url"] = body.url
+    recipe["url"] = new_url
     recipe_path.write_text(json.dumps(recipe, ensure_ascii=False, indent=2))
     history_store.update_recipe(recipe, public_path=f"/a/{app_id}", runtime_url=recipe.get("url"))
     distiller._write_download_page(APPS_DIR / app_id, recipe)
@@ -539,7 +548,7 @@ async def update_app_url(app_id: str, body: UpdateUrlRequest):
     return {
         "app_id": app_id,
         "old_url": old_url,
-        "new_url": body.url,
+        "new_url": new_url,
         "cache_purged": purge_result,
     }
 
@@ -646,14 +655,15 @@ async def import_history(payload: HistoryImportPayload, request: Request):
             effective_recipe = recipe
             should_restore = not recipe_path.exists()
             if recipe_path.exists():
+                # The app already exists on the server: its recipe.json is the
+                # source of truth (and holds the secret edit_token). Never let
+                # an imported snapshot overwrite it — otherwise anyone could
+                # repoint someone else's installed app by importing a crafted
+                # snapshot. Import only re-links the app to this device.
                 try:
-                    existing_recipe = json.loads(recipe_path.read_text())
+                    effective_recipe = json.loads(recipe_path.read_text())
                 except Exception:
-                    existing_recipe = {}
-                if _recipe_needs_restore(existing_recipe, recipe):
-                    should_restore = True
-                else:
-                    effective_recipe = existing_recipe
+                    effective_recipe = recipe
             if should_restore:
                 distiller.write_app_files(app_dir, recipe, base_url=base_url)
                 effective_recipe = _load_recipe(app_id)
