@@ -100,6 +100,8 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 ## النشر
 
+> دليل النشر الكامل في الإنتاج (systemd، Nginx، HTTPS، Android/iOS، R2) في **[DEPLOY.ar.md](DEPLOY.ar.md)**.
+
 في الإنتاج، من الشائع تشغيله عبر systemd خلف وكيل عكسي Nginx:
 
 ```ini

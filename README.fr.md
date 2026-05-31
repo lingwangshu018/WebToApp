@@ -102,6 +102,8 @@ Ouvrez http://127.0.0.1:8000.
 
 ## Déploiement
 
+> Pour un guide complet de déploiement en production (systemd, Nginx, HTTPS, Android/iOS, R2), voir **[DEPLOY.fr.md](DEPLOY.fr.md)**.
+
 En production, il est courant de l'exécuter sous systemd, derrière un proxy inverse Nginx :
 
 ```ini

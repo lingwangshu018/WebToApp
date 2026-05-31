@@ -102,6 +102,8 @@ Abre http://127.0.0.1:8000.
 
 ## Despliegue
 
+> Para una guía completa de despliegue en producción (systemd, Nginx, HTTPS, Android/iOS, R2), consulta **[DEPLOY.es.md](DEPLOY.es.md)**.
+
 En producción es habitual ejecutarlo con systemd, detrás de un proxy inverso Nginx:
 
 ```ini

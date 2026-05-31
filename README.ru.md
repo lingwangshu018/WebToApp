@@ -102,6 +102,8 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 ## Развёртывание
 
+> Полное руководство по продакшен-развёртыванию (systemd, Nginx, HTTPS, Android/iOS, R2) — в **[DEPLOY.ru.md](DEPLOY.ru.md)**.
+
 В продакшене обычно запускают через systemd за обратным прокси Nginx:
 
 ```ini

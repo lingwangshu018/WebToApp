@@ -102,6 +102,8 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 ## Deployment
 
+> Eine vollständige Produktiv-Bereitstellungsanleitung (systemd, Nginx, HTTPS, Android/iOS, R2) findest du in **[DEPLOY.de.md](DEPLOY.de.md)**.
+
 In der Produktion wird es üblicherweise unter systemd hinter einem Nginx-Reverse-Proxy ausgeführt:
 
 ```ini

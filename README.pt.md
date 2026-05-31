@@ -102,6 +102,8 @@ Abra http://127.0.0.1:8000.
 
 ## Implantação
 
+> Para um guia completo de implantação em produção (systemd, Nginx, HTTPS, Android/iOS, R2), veja **[DEPLOY.pt.md](DEPLOY.pt.md)**.
+
 Em produção é comum executá-lo com systemd, atrás de um proxy reverso Nginx:
 
 ```ini

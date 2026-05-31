@@ -102,6 +102,8 @@ Open http://127.0.0.1:8000.
 
 ## Deployment
 
+> For a complete step-by-step production guide (systemd, Nginx, HTTPS, Android/iOS, R2), see **[DEPLOY.md](DEPLOY.md)**.
+
 In production it is common to run it under systemd, behind an Nginx reverse proxy:
 
 ```ini
@@ -121,6 +123,16 @@ WantedBy=multi-user.target
 ```
 
 For iOS profile signing ("signature-free" install), see the certificate setup in [`certs/README.md`](certs/README.md).
+
+## How Cloudflare R2 offload works
+
+Generated installers (APK / ZIP / `.mobileconfig`) can be large, and serving every download from the origin burns its bandwidth. When R2 is configured:
+
+1. **After each build**, every file in `generated/<app_id>/downloads/` is mirrored to R2 under the key `<app_id>/downloads/<filename>` (`server/engine/storage.py`), and the resulting public URLs are written into the app's `recipe.json` as a `downloads_cdn` map.
+2. **On download**, `GET /a/<id>/download/<platform>` prefers the CDN URL in `downloads_cdn` and returns a **302 redirect** to R2; if absent, it falls back to streaming the local file. The origin therefore spends CPU during builds, not bandwidth on every share or QR scan.
+3. **On cleanup**, an app's objects under `<app_id>/` are removed from R2 alongside its local data.
+
+If any `R2_*` variable is unset the feature is a no-op and downloads are served locally — nothing breaks. Existing apps built before R2 was enabled can be migrated with `python -m server.scripts.backfill_r2`. Full setup steps (bucket, API token, public access, custom domain, backfill) are in [DEPLOY.md §11](DEPLOY.md#11-cloudflare-r2-offload-optional).
 
 ## Security notes
 

@@ -102,6 +102,8 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 ## 部署
 
+> 完整的生产部署教程（systemd、Nginx、HTTPS、Android/iOS、R2），见 **[DEPLOY.zh.md](DEPLOY.zh.md)**。
+
 生产环境用 systemd 托管，前置 Nginx 反代是常见做法：
 
 ```ini

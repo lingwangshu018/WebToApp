@@ -102,6 +102,8 @@ http://127.0.0.1:8000 を開きます。
 
 ## デプロイ
 
+> systemd・Nginx・HTTPS・Android/iOS・R2 を含む完全な本番デプロイ手順は **[DEPLOY.ja.md](DEPLOY.ja.md)** を参照。
+
 本番環境では、Nginx リバースプロキシの背後で systemd により管理するのが一般的です。
 
 ```ini
