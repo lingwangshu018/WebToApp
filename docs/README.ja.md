@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+<img src="../assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
 
 # WebToApp
 
@@ -9,21 +9,21 @@
 リンクを 1 つ入力すると、**iPhone / iPad · Android · Windows · macOS · Linux** 向けの完成品が手に入ります。
 
 [![ライブデモ](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
-[![ライセンス: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![ライセンス: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](../LICENSE)
 [![プラットフォーム](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#features)
 
-[English](README.md) · [简体中文](README.zh.md) · **日本語** · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](../README.md) · [简体中文](README.zh.md) · **日本語** · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 </div>
 
 ---
 
 <div align="center">
-  <img src="assets/screenshot-1.png" alt="WebToApp スクリーンショット" width="420">
-  <img src="assets/screenshot-2.png" alt="WebToApp スクリーンショット" width="420">
+  <img src="../assets/screenshot-1.png" alt="WebToApp スクリーンショット" width="420">
+  <img src="../assets/screenshot-2.png" alt="WebToApp スクリーンショット" width="420">
   <br>
-  <img src="assets/screenshot-3.png" alt="WebToApp スクリーンショット" width="420">
-  <img src="assets/screenshot-4.png" alt="WebToApp スクリーンショット" width="420">
+  <img src="../assets/screenshot-3.png" alt="WebToApp スクリーンショット" width="420">
+  <img src="../assets/screenshot-4.png" alt="WebToApp スクリーンショット" width="420">
 </div>
 
 ---
@@ -98,7 +98,7 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 http://127.0.0.1:8000 を開きます。
 
 > ローカル開発では環境変数は不要です。公開デプロイ時は `PUBLIC_BASE_URL` を設定してください。
-> 設定しないと iPhone から `localhost` を開けません。全変数は [`.env.example`](.env.example) を参照してください。
+> 設定しないと iPhone から `localhost` を開けません。全変数は [`.env.example`](../.env.example) を参照してください。
 
 ## デプロイ
 
@@ -122,7 +122,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-iOS プロファイル署名（「署名不要」インストール）の証明書設定は [`certs/README.md`](certs/README.md) を参照してください。
+iOS プロファイル署名（「署名不要」インストール）の証明書設定は [`certs/README.md`](../certs/README.md) を参照してください。
 
 ## セキュリティに関する注意
 
@@ -132,4 +132,4 @@ iOS プロファイル署名（「署名不要」インストール）の証明�
 
 ## ライセンス
 
-[MIT](LICENSE)
+[MIT](../LICENSE)

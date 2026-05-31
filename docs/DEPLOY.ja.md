@@ -183,7 +183,7 @@ sudo certbot --nginx -d your-domain.com
 
 ## 10. iOS プロファイル署名（任意）
 
-デフォルトでは iOS の `.mobileconfig` は未署名です（iOS はインストール可能ですが「未検証」と表示）。iOS に提供元としてあなたのドメインを表示させるには、`IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` で公的 CA 証明書を指定するか、`certs/ios-cert.pem`、`certs/ios-key.pem`、`certs/ios-chain.pem` を配置します。署名にはシステムの `openssl` を使用します。[`certs/README.md`](certs/README.md) を参照。
+デフォルトでは iOS の `.mobileconfig` は未署名です（iOS はインストール可能ですが「未検証」と表示）。iOS に提供元としてあなたのドメインを表示させるには、`IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` で公的 CA 証明書を指定するか、`certs/ios-cert.pem`、`certs/ios-key.pem`、`certs/ios-chain.pem` を配置します。署名にはシステムの `openssl` を使用します。[`certs/README.md`](../certs/README.md) を参照。
 
 ## 11. Cloudflare R2 オフロード（任意）
 

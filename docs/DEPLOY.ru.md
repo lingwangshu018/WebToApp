@@ -182,7 +182,7 @@ sudo certbot --nginx -d your-domain.com
 
 ## 10. Подпись профиля iOS (опционально)
 
-По умолчанию `.mobileconfig` для iOS не подписан (iOS всё равно установит, но покажет «Не проверено»). Чтобы iOS показывал ваш домен как источник, укажите сертификат публичного CA через `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` либо положите `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. Подпись использует системный `openssl`. См. [`certs/README.md`](certs/README.md).
+По умолчанию `.mobileconfig` для iOS не подписан (iOS всё равно установит, но покажет «Не проверено»). Чтобы iOS показывал ваш домен как источник, укажите сертификат публичного CA через `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` либо положите `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. Подпись использует системный `openssl`. См. [`certs/README.md`](../certs/README.md).
 
 ## 11. Выгрузка в Cloudflare R2 (опционально)
 

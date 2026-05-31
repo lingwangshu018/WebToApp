@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+<img src="../assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
 
 # WebToApp
 
@@ -9,21 +9,21 @@
 输入一个链接，输出覆盖 **iPhone / iPad · Android · Windows · macOS · Linux** 的成品。
 
 [![在线演示](https://img.shields.io/badge/在线演示-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
-[![许可证: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![许可证: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](../LICENSE)
 [![平台](https://img.shields.io/badge/平台-5-736357?style=for-the-badge)](#功能)
 
-[English](README.md) · **简体中文** · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](../README.md) · **简体中文** · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 </div>
 
 ---
 
 <div align="center">
-  <img src="assets/screenshot-1.png" alt="WebToApp 截图" width="420">
-  <img src="assets/screenshot-2.png" alt="WebToApp 截图" width="420">
+  <img src="../assets/screenshot-1.png" alt="WebToApp 截图" width="420">
+  <img src="../assets/screenshot-2.png" alt="WebToApp 截图" width="420">
   <br>
-  <img src="assets/screenshot-3.png" alt="WebToApp 截图" width="420">
-  <img src="assets/screenshot-4.png" alt="WebToApp 截图" width="420">
+  <img src="../assets/screenshot-3.png" alt="WebToApp 截图" width="420">
+  <img src="../assets/screenshot-4.png" alt="WebToApp 截图" width="420">
 </div>
 
 ---
@@ -98,7 +98,7 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 打开 http://127.0.0.1:8000 即可。
 
 > 本地调试无需配置任何环境变量。部署到公网时请设置 `PUBLIC_BASE_URL`，
-> 否则 iPhone 无法打开 `localhost`。完整变量见 [`.env.example`](.env.example)。
+> 否则 iPhone 无法打开 `localhost`。完整变量见 [`.env.example`](../.env.example)。
 
 ## 部署
 
@@ -122,7 +122,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-iOS 描述文件签名（“免签”）的证书配置见 [`certs/README.md`](certs/README.md)。
+iOS 描述文件签名（“免签”）的证书配置见 [`certs/README.md`](../certs/README.md)。
 
 ## 安全说明
 
@@ -132,4 +132,4 @@ iOS 描述文件签名（“免签”）的证书配置见 [`certs/README.md`](c
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](../LICENSE)

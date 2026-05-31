@@ -183,7 +183,7 @@ Point the app at the SDK with `ANDROID_HOME` / `ANDROID_SDK_ROOT` if it isn't au
 
 ## 10. iOS profile signing (optional)
 
-By default the iOS `.mobileconfig` is unsigned (iOS still installs it, just shows "Unverified"). To have iOS show your domain as the source, provide a public-CA certificate via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, or drop `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. Signing uses the system `openssl`. See [`certs/README.md`](certs/README.md).
+By default the iOS `.mobileconfig` is unsigned (iOS still installs it, just shows "Unverified"). To have iOS show your domain as the source, provide a public-CA certificate via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, or drop `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. Signing uses the system `openssl`. See [`certs/README.md`](../certs/README.md).
 
 ## 11. Cloudflare R2 offload (optional)
 
@@ -252,4 +252,4 @@ If you changed frontend assets (`css/`, `js/`), bump the `?v=` query string in `
 
 ---
 
-See also the [README](README.md) for an overview of the project.
+See also the [README](../README.md) for an overview of the project.

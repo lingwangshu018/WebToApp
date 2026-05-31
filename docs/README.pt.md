@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+<img src="../assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
 
 # WebToApp
 
@@ -9,21 +9,21 @@
 Um link de entrada, produtos prontos para **iPhone / iPad · Android · Windows · macOS · Linux**.
 
 [![Demo](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
-[![Licença: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![Licença: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](../LICENSE)
 [![Plataformas](https://img.shields.io/badge/Plataformas-5-736357?style=for-the-badge)](#features)
 
-[English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · **Português** · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](../README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · **Português** · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 </div>
 
 ---
 
 <div align="center">
-  <img src="assets/screenshot-1.png" alt="WebToApp" width="420">
-  <img src="assets/screenshot-2.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-1.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-2.png" alt="WebToApp" width="420">
   <br>
-  <img src="assets/screenshot-3.png" alt="WebToApp" width="420">
-  <img src="assets/screenshot-4.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-3.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-4.png" alt="WebToApp" width="420">
 </div>
 
 ---
@@ -98,7 +98,7 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 Abra http://127.0.0.1:8000.
 
 > Nenhuma variável de ambiente é necessária para o desenvolvimento local. Ao implantar publicamente, defina `PUBLIC_BASE_URL`,
-> caso contrário os iPhones não conseguem abrir `localhost`. Veja [`.env.example`](.env.example) para a lista completa.
+> caso contrário os iPhones não conseguem abrir `localhost`. Veja [`.env.example`](../.env.example) para a lista completa.
 
 ## Implantação
 
@@ -122,7 +122,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Para a assinatura do perfil iOS (instalação "sem assinatura"), veja a configuração do certificado em [`certs/README.md`](certs/README.md).
+Para a assinatura do perfil iOS (instalação "sem assinatura"), veja a configuração do certificado em [`certs/README.md`](../certs/README.md).
 
 ## Notas de segurança
 
@@ -132,4 +132,4 @@ Para a assinatura do perfil iOS (instalação "sem assinatura"), veja a configur
 
 ## Licença
 
-[MIT](LICENSE)
+[MIT](../LICENSE)

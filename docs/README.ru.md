@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
+<img src="../assets/site-logo.jpg" alt="WebToApp" width="120" height="120" style="border-radius: 24px;">
 
 # WebToApp
 
@@ -9,21 +9,21 @@
 Одна ссылка на входе — готовые продукты для **iPhone / iPad · Android · Windows · macOS · Linux**.
 
 [![Демо](https://img.shields.io/badge/Live_Demo-shiaho.sbs-c97953?style=for-the-badge)](https://shiaho.sbs)
-[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
+[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](../LICENSE)
 [![Платформы](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#features)
 
-[English](README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · **Русский** · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+[English](../README.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · **Русский** · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 </div>
 
 ---
 
 <div align="center">
-  <img src="assets/screenshot-1.png" alt="WebToApp" width="420">
-  <img src="assets/screenshot-2.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-1.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-2.png" alt="WebToApp" width="420">
   <br>
-  <img src="assets/screenshot-3.png" alt="WebToApp" width="420">
-  <img src="assets/screenshot-4.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-3.png" alt="WebToApp" width="420">
+  <img src="../assets/screenshot-4.png" alt="WebToApp" width="420">
 </div>
 
 ---
@@ -98,7 +98,7 @@ uvicorn server.main:app --host 127.0.0.1 --port 8000
 Откройте http://127.0.0.1:8000.
 
 > Для локальной разработки переменные окружения не нужны. При публичном развёртывании задайте `PUBLIC_BASE_URL`,
-> иначе iPhone не сможет открыть `localhost`. Полный список см. в [`.env.example`](.env.example).
+> иначе iPhone не сможет открыть `localhost`. Полный список см. в [`.env.example`](../.env.example).
 
 ## Развёртывание
 
@@ -122,7 +122,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Настройку сертификата для подписи профиля iOS («установка без подписи») см. в [`certs/README.md`](certs/README.md).
+Настройку сертификата для подписи профиля iOS («установка без подписи») см. в [`certs/README.md`](../certs/README.md).
 
 ## Замечания по безопасности
 
@@ -132,4 +132,4 @@ WantedBy=multi-user.target
 
 ## Лицензия
 
-[MIT](LICENSE)
+[MIT](../LICENSE)

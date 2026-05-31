@@ -214,7 +214,7 @@ sudo certbot --nginx -d your-domain.com
 
 ## 10. توقيع ملف iOS (اختياري)
 
-افتراضيًا يكون ملف `.mobileconfig` لـ iOS غير موقّع (يثبّته iOS لكنه يعرض "غير موثّق"). لإظهار نطاقك كمصدر، وفّر شهادة CA عامة عبر `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`، أو ضع `certs/ios-cert.pem` و`certs/ios-key.pem` و`certs/ios-chain.pem`. يستخدم التوقيع `openssl` النظامي. انظر [`certs/README.md`](certs/README.md).
+افتراضيًا يكون ملف `.mobileconfig` لـ iOS غير موقّع (يثبّته iOS لكنه يعرض "غير موثّق"). لإظهار نطاقك كمصدر، وفّر شهادة CA عامة عبر `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`، أو ضع `certs/ios-cert.pem` و`certs/ios-key.pem` و`certs/ios-chain.pem`. يستخدم التوقيع `openssl` النظامي. انظر [`certs/README.md`](../certs/README.md).
 
 ## 11. تفريغ Cloudflare R2 (اختياري)
 

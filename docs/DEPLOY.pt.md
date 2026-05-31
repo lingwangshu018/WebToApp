@@ -182,7 +182,7 @@ Aponte o app para o SDK com `ANDROID_HOME` / `ANDROID_SDK_ROOT` se não for dete
 
 ## 10. Assinatura de perfil iOS (opcional)
 
-Por padrão o `.mobileconfig` do iOS não é assinado (o iOS ainda instala, mas mostra "Não verificado"). Para o iOS exibir seu domínio como origem, forneça um certificado de CA pública via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, ou coloque `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. A assinatura usa o `openssl` do sistema. Ver [`certs/README.md`](certs/README.md).
+Por padrão o `.mobileconfig` do iOS não é assinado (o iOS ainda instala, mas mostra "Não verificado"). Para o iOS exibir seu domínio como origem, forneça um certificado de CA pública via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, ou coloque `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. A assinatura usa o `openssl` do sistema. Ver [`certs/README.md`](../certs/README.md).
 
 ## 11. Offload para Cloudflare R2 (opcional)
 

@@ -182,7 +182,7 @@ Pointez l'app vers le SDK via `ANDROID_HOME` / `ANDROID_SDK_ROOT` s'il n'est pas
 
 ## 10. Signature de profil iOS (optionnel)
 
-Par défaut, le `.mobileconfig` iOS n'est pas signé (iOS l'installe quand même mais affiche « Non vérifié »). Pour qu'iOS affiche votre domaine comme source, fournissez un certificat d'AC publique via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, ou déposez `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. La signature utilise le `openssl` du système. Voir [`certs/README.md`](certs/README.md).
+Par défaut, le `.mobileconfig` iOS n'est pas signé (iOS l'installe quand même mais affiche « Non vérifié »). Pour qu'iOS affiche votre domaine comme source, fournissez un certificat d'AC publique via `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE`, ou déposez `certs/ios-cert.pem`, `certs/ios-key.pem`, `certs/ios-chain.pem`. La signature utilise le `openssl` du système. Voir [`certs/README.md`](../certs/README.md).
 
 ## 11. Déchargement vers Cloudflare R2 (optionnel)
 

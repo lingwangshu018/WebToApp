@@ -183,7 +183,7 @@ sudo certbot --nginx -d your-domain.com
 
 ## 10. iOS 描述文件签名（可选）
 
-默认情况下 iOS 的 `.mobileconfig` 是未签名的（iOS 仍可安装，只是显示"未验证"）。要让 iOS 显示你的域名为来源，通过 `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` 提供公开 CA 证书，或放入 `certs/ios-cert.pem`、`certs/ios-key.pem`、`certs/ios-chain.pem`。签名使用系统 `openssl`。详见 [`certs/README.md`](certs/README.md)。
+默认情况下 iOS 的 `.mobileconfig` 是未签名的（iOS 仍可安装，只是显示"未验证"）。要让 iOS 显示你的域名为来源，通过 `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` 提供公开 CA 证书，或放入 `certs/ios-cert.pem`、`certs/ios-key.pem`、`certs/ios-chain.pem`。签名使用系统 `openssl`。详见 [`certs/README.md`](../certs/README.md)。
 
 ## 11. Cloudflare R2 卸载（可选）
 

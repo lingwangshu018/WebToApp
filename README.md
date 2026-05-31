@@ -12,7 +12,7 @@ One link in, finished products out for **iPhone / iPad · Android · Windows · 
 [![License: MIT](https://img.shields.io/badge/License-MIT-1e1914?style=for-the-badge)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platforms-5-736357?style=for-the-badge)](#features)
 
-**English** · [简体中文](README.zh.md) · [日本語](README.ja.md) · [العربية](README.ar.md) · [Русский](README.ru.md) · [Español](README.es.md) · [Português](README.pt.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+**English** · [简体中文](docs/README.zh.md) · [日本語](docs/README.ja.md) · [العربية](docs/README.ar.md) · [Русский](docs/README.ru.md) · [Español](docs/README.es.md) · [Português](docs/README.pt.md) · [Français](docs/README.fr.md) · [Deutsch](docs/README.de.md)
 
 </div>
 
@@ -102,7 +102,7 @@ Open http://127.0.0.1:8000.
 
 ## Deployment
 
-> For a complete step-by-step production guide (systemd, Nginx, HTTPS, Android/iOS, R2), see **[DEPLOY.md](DEPLOY.md)**.
+> For a complete step-by-step production guide (systemd, Nginx, HTTPS, Android/iOS, R2), see **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
 In production it is common to run it under systemd, behind an Nginx reverse proxy:
 
@@ -132,7 +132,7 @@ Generated installers (APK / ZIP / `.mobileconfig`) can be large, and serving eve
 2. **On download**, `GET /a/<id>/download/<platform>` prefers the CDN URL in `downloads_cdn` and returns a **302 redirect** to R2; if absent, it falls back to streaming the local file. The origin therefore spends CPU during builds, not bandwidth on every share or QR scan.
 3. **On cleanup**, an app's objects under `<app_id>/` are removed from R2 alongside its local data.
 
-If any `R2_*` variable is unset the feature is a no-op and downloads are served locally — nothing breaks. Existing apps built before R2 was enabled can be migrated with `python -m server.scripts.backfill_r2`. Full setup steps (bucket, API token, public access, custom domain, backfill) are in [DEPLOY.md §11](DEPLOY.md#11-cloudflare-r2-offload-optional).
+If any `R2_*` variable is unset the feature is a no-op and downloads are served locally — nothing breaks. Existing apps built before R2 was enabled can be migrated with `python -m server.scripts.backfill_r2`. Full setup steps (bucket, API token, public access, custom domain, backfill) are in [docs/DEPLOY.md §11](docs/DEPLOY.md#11-cloudflare-r2-offload-optional).
 
 ## Security notes
 
