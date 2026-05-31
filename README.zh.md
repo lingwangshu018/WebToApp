@@ -23,8 +23,6 @@
   <br><br>
   <img src="assets/screenshot-2.png" alt="WebToApp 截图" width="430">
   <img src="assets/screenshot-3.png" alt="WebToApp 截图" width="430">
-  <br>
-  <img src="assets/screenshot-4.png" alt="WebToApp 截图" width="860">
 </div>
 
 ---

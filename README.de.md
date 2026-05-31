@@ -23,8 +23,6 @@ Ein Link rein, fertige Produkte für **iPhone / iPad · Android · Windows · ma
   <br><br>
   <img src="assets/screenshot-2.png" alt="WebToApp" width="430">
   <img src="assets/screenshot-3.png" alt="WebToApp" width="430">
-  <br>
-  <img src="assets/screenshot-4.png" alt="WebToApp" width="860">
 </div>
 
 ---
