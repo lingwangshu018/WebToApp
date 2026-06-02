@@ -29,7 +29,7 @@ One link in, finished products out for **iPhone / iPad · Android · Windows · 
 ---
 
 Enter a URL and, seconds later, get a finished product you can install, share and use like an app.
-A single generated result covers **iPhone / iPad, Android, Windows, macOS and Linux**.
+A single generated result covers **iPhone / iPad, Android, Windows, macOS and Linux**, and each one is only a few KB — so it downloads and installs almost instantly.
 
 Open source · Free · No sign-up. Try it live at **[shiaho.sbs](https://shiaho.sbs)**.
 
@@ -47,6 +47,20 @@ Open source · Free · No sign-up. Try it live at **[shiaho.sbs](https://shiaho.
 - **Auto cleanup**: apps with no visits for 30 days are automatically reclaimed.
 - **Optional Cloudflare R2 offload**: downloads go through the CDN, saving origin bandwidth.
 - **Multilingual UI**: 9 built-in languages (English, Simplified Chinese, Japanese, Arabic, Russian, Spanish, Portuguese, French, German). The UI defaults to English and can be switched manually from the top-right corner, with RTL layout for Arabic.
+
+## App size
+
+Each package is just a thin entry point to your site — it bundles no site content, so the artifacts are measured in **kilobytes, not megabytes**. Under the hood it uses each platform's native lightweight shell: an Android WebView APK, an iOS Web Clip profile, and `.app` / `.bat` / `.desktop` launchers that open the system browser in app mode on desktop.
+
+Measured on a real build (figures are representative; they barely vary by site):
+
+| Platform | Package | Typical size | What's inside |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **~21 KB** | A real, installable WebView APK (v1+v2+v3 signed) |
+| iOS / iPadOS | `ios.mobileconfig` | **~4 KB** | A Web Clip configuration profile |
+| macOS | `macos.zip` | **~1.4 KB** | A `.app` bundle (launcher script + icon) |
+| Windows | `windows.zip` | **~1.2 KB** | A `.bat` launcher + desktop-shortcut helper + icon |
+| Linux | `linux.tar.gz` | **~0.7 KB** | A `.desktop` entry + install script + icon |
 
 ## Tech stack
 

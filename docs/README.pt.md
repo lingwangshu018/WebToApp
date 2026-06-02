@@ -29,7 +29,7 @@ Um link de entrada, produtos prontos para **iPhone / iPad · Android · Windows 
 ---
 
 Insira uma URL e, em segundos, obtenha um produto pronto que você pode instalar, compartilhar e usar como um app.
-Um único resultado gerado abrange **iPhone / iPad, Android, Windows, macOS e Linux**.
+Um único resultado gerado abrange **iPhone / iPad, Android, Windows, macOS e Linux**, e cada um tem apenas alguns KB — então baixa e instala quase instantaneamente.
 
 Código aberto · Grátis · Sem cadastro. Experimente ao vivo em **[shiaho.sbs](https://shiaho.sbs)**.
 
@@ -47,6 +47,20 @@ Código aberto · Grátis · Sem cadastro. Experimente ao vivo em **[shiaho.sbs]
 - **Limpeza automática**: apps sem visitas por 30 dias são recuperados automaticamente.
 - **Descarregamento opcional via Cloudflare R2**: os downloads passam pela CDN, economizando banda da origem.
 - **Interface multilíngue**: 9 idiomas integrados (inglês, chinês simplificado, japonês, árabe, russo, espanhol, português, francês, alemão), que segue automaticamente o idioma do navegador, com layout RTL para o árabe. Troque manualmente no canto superior direito.
+
+## Tamanho do app
+
+Cada pacote é apenas um ponto de entrada leve para o seu site — não empacota conteúdo do site, então os artefatos são medidos em **kilobytes, não megabytes**. Nos bastidores, usa a casca leve nativa de cada plataforma: um APK WebView do Android, um perfil Web Clip do iOS e lançadores `.app` / `.bat` / `.desktop` que abrem o navegador do sistema em modo app no desktop.
+
+Medido em um build real (os números são representativos; mal variam por site):
+
+| Plataforma | Pacote | Tamanho típico | Conteúdo |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **~21 KB** | Um APK WebView real e instalável (assinado v1+v2+v3) |
+| iOS / iPadOS | `ios.mobileconfig` | **~4 KB** | Um perfil de configuração Web Clip |
+| macOS | `macos.zip` | **~1,4 KB** | Um pacote `.app` (script lançador + ícone) |
+| Windows | `windows.zip` | **~1,2 KB** | Um lançador `.bat` + auxiliar de atalho + ícone |
+| Linux | `linux.tar.gz` | **~0,7 KB** | Uma entrada `.desktop` + script de instalação + ícone |
 
 ## Tecnologias
 

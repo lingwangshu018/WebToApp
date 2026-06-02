@@ -61,7 +61,7 @@ pip install -r server/requirements.txt
 
 <div dir="rtl">
 
-يثبّت هذا التبعيات الخمس: ‏`fastapi`، `uvicorn[standard]`، `httpx`، `Pillow`، `boto3`.
+يثبّت هذا التبعيات الأربع: ‏`fastapi`، `uvicorn[standard]`، `httpx`، `Pillow`. ‏تفريغ Cloudflare R2 (اختياري) لا يحتاج أي حزمة إضافية — انظر §11.
 
 ## 4. الإعداد
 
@@ -227,6 +227,8 @@ sudo certbot --nginx -d your-domain.com
 3. **عند التنظيف**، تُحذف كائنات التطبيق تحت `<app_id>/` من R2 مع بياناته المحلية.
 
 إن لم يُضبط أي متغيّر `R2_*` يصبح كل ذلك بلا أثر وتُقدَّم التنزيلات محليًا — لا شيء ينكسر. يمكن ترحيل التطبيقات القديمة المبنية قبل التفعيل عبر `python -m server.scripts.backfill_r2`.
+
+> **ملاحظة حول التنفيذ:** يستخدم R2 واجهة S3 التي تُصادِق بتوقيع AWS Signature V4. بدلًا من جلب حزمة `boto3`/`botocore` الثقيلة، يتضمّن `server/engine/storage.py` مُوقِّع SigV4 خاصًّا به (بالمكتبة القياسية `hmac`/`hashlib` فقط) ويرسل الطلبات عبر `httpx` — وهو عميل HTTP الذي يستخدمه التطبيق أصلًا. لذا لا يحتاج تفريغ R2 إلى **أي AWS SDK**؛ وقد تم التحقق من المُوقِّع مقابل متجهات اختبار SigV4 المنشورة من AWS (‏`python -m server.engine.storage`).
 
 ### الإعداد
 

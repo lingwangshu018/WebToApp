@@ -53,7 +53,7 @@ source venv/bin/activate
 pip install -r server/requirements.txt
 ```
 
-Damit werden die fünf Laufzeit-Abhängigkeiten installiert: `fastapi`, `uvicorn[standard]`, `httpx`, `Pillow`, `boto3`.
+Damit werden die vier Laufzeit-Abhängigkeiten installiert: `fastapi`, `uvicorn[standard]`, `httpx`, `Pillow`. Das Cloudflare-R2-Offload (optional) braucht kein zusätzliches Paket — siehe §11.
 
 ## 4. Konfiguration
 
@@ -195,6 +195,8 @@ Generierte Installer (APK / ZIP / `.mobileconfig`) können groß sein, und jeden
 3. **Beim Aufräumen** werden die Objekte der App unter `<app_id>/` zusammen mit ihren lokalen Daten aus R2 gelöscht.
 
 Fehlt eine `R2_*`-Variable, wird das Feature zum No-op und Downloads werden lokal ausgeliefert — nichts bricht. Vor der R2-Aktivierung gebaute Apps lassen sich mit `python -m server.scripts.backfill_r2` migrieren.
+
+> **Implementierungshinweis:** R2 spricht die S3-API, die sich mit AWS Signature V4 authentifiziert. Statt den schweren `boto3`/`botocore`-Stack einzubinden, bringt `server/engine/storage.py` einen eigenen SigV4-Signierer mit (nur Standardbibliothek `hmac`/`hashlib`) und sendet Anfragen über `httpx`, denselben HTTP-Client, den die App bereits nutzt. Das R2-Offload benötigt daher **kein AWS-SDK**; der Signierer ist gegen die von AWS veröffentlichten SigV4-Testvektoren validiert (`python -m server.engine.storage`).
 
 ### Einrichtung
 

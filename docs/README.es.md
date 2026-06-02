@@ -29,7 +29,7 @@ Un enlace de entrada, productos terminados para **iPhone / iPad · Android · Wi
 ---
 
 Introduce una URL y, en segundos, obtén un producto terminado que puedes instalar, compartir y usar como una app.
-Un único resultado generado abarca **iPhone / iPad, Android, Windows, macOS y Linux**.
+Un único resultado generado abarca **iPhone / iPad, Android, Windows, macOS y Linux**, y cada uno ocupa solo unos pocos KB, por lo que se descarga e instala casi al instante.
 
 Código abierto · Gratis · Sin registro. Pruébalo en vivo en **[shiaho.sbs](https://shiaho.sbs)**.
 
@@ -47,6 +47,20 @@ Código abierto · Gratis · Sin registro. Pruébalo en vivo en **[shiaho.sbs](h
 - **Limpieza automática**: las apps sin visitas durante 30 días se recuperan automáticamente.
 - **Descarga opcional vía Cloudflare R2**: las descargas pasan por la CDN, ahorrando ancho de banda del origen.
 - **Interfaz multilingüe**: 9 idiomas integrados (inglés, chino simplificado, japonés, árabe, ruso, español, portugués, francés, alemán), que sigue automáticamente el idioma del navegador, con diseño RTL para el árabe. Cámbialo manualmente desde la esquina superior derecha.
+
+## Tamaño de la app
+
+Cada paquete es solo un punto de entrada ligero a tu sitio — no empaqueta contenido del sitio, por lo que los artefactos se miden en **kilobytes, no megabytes**. Por debajo usa la cubierta ligera nativa de cada plataforma: un APK WebView de Android, un perfil Web Clip de iOS y lanzadores `.app` / `.bat` / `.desktop` que abren el navegador del sistema en modo app en escritorio.
+
+Medido en una compilación real (las cifras son representativas; apenas varían según el sitio):
+
+| Plataforma | Paquete | Tamaño típico | Contenido |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **~21 KB** | Un APK WebView real e instalable (firmado v1+v2+v3) |
+| iOS / iPadOS | `ios.mobileconfig` | **~4 KB** | Un perfil de configuración Web Clip |
+| macOS | `macos.zip` | **~1,4 KB** | Un paquete `.app` (script lanzador + icono) |
+| Windows | `windows.zip` | **~1,2 KB** | Un lanzador `.bat` + ayudante de acceso directo + icono |
+| Linux | `linux.tar.gz` | **~0,7 KB** | Una entrada `.desktop` + script de instalación + icono |
 
 ## Tecnologías
 

@@ -53,7 +53,7 @@ source venv/bin/activate
 pip install -r server/requirements.txt
 ```
 
-这会安装 5 个运行时依赖：`fastapi`、`uvicorn[standard]`、`httpx`、`Pillow`、`boto3`。
+这会安装 4 个运行时依赖：`fastapi`、`uvicorn[standard]`、`httpx`、`Pillow`。Cloudflare R2 卸载（可选）无需额外安装包——详见 §11。
 
 ## 4. 配置
 
@@ -196,6 +196,8 @@ sudo certbot --nginx -d your-domain.com
 3. **清理时**，应用被回收时，其在 R2 中 `<app_id>/` 下的对象也会一并删除。
 
 只要任一 `R2_*` 变量未设置，整个功能就是空操作，下载走本地——不会出错。在启用 R2 之前构建的旧应用，可用 `python -m server.scripts.backfill_r2` 迁移。
+
+> **实现说明：** R2 使用 S3 API，鉴权采用 AWS Signature V4。为避免引入庞大的 `boto3`/`botocore`，`server/engine/storage.py` 自带 SigV4 签名实现（仅用标准库 `hmac`/`hashlib`），并通过应用已有的 `httpx` 发送请求。因此 R2 卸载**无需 AWS SDK**；该签名实现已对照 AWS 官方 SigV4 测试向量校验（`python -m server.engine.storage`）。
 
 ### 配置步骤
 

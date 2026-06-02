@@ -53,7 +53,7 @@ source venv/bin/activate
 pip install -r server/requirements.txt
 ```
 
-5 つのランタイム依存をインストールします：`fastapi`、`uvicorn[standard]`、`httpx`、`Pillow`、`boto3`。
+4 つのランタイム依存をインストールします：`fastapi`、`uvicorn[standard]`、`httpx`、`Pillow`。Cloudflare R2 オフロード（任意）に追加パッケージは不要です——§11 を参照。
 
 ## 4. 設定
 
@@ -196,6 +196,8 @@ sudo certbot --nginx -d your-domain.com
 3. **クリーンアップ時**、アプリが回収されると `<app_id>/` 配下のオブジェクトも R2 から削除されます。
 
 いずれかの `R2_*` 変数が未設定なら機能は無効化され、ダウンロードはローカル配信になります。壊れません。R2 有効化前にビルドされた既存アプリは `python -m server.scripts.backfill_r2` で移行できます。
+
+> **実装メモ：** R2 は S3 API を使い、認証は AWS Signature V4 です。重い `boto3`/`botocore` を導入せず、`server/engine/storage.py` が独自の SigV4 署名（標準ライブラリの `hmac`/`hashlib` のみ）を備え、アプリが既に使っている `httpx` でリクエストを送ります。そのため R2 オフロードに **AWS SDK は不要**です。署名実装は AWS 公式の SigV4 テストベクターで検証済みです（`python -m server.engine.storage`）。
 
 ### セットアップ
 

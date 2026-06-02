@@ -29,7 +29,7 @@ Ein Link rein, fertige Produkte für **iPhone / iPad · Android · Windows · ma
 ---
 
 Gib eine URL ein und erhalte Sekunden später ein fertiges Produkt, das du installieren, teilen und wie eine App nutzen kannst.
-Ein einziges generiertes Ergebnis deckt **iPhone / iPad, Android, Windows, macOS und Linux** ab.
+Ein einziges generiertes Ergebnis deckt **iPhone / iPad, Android, Windows, macOS und Linux** ab, und jedes ist nur wenige KB groß — heruntergeladen und installiert ist es daher fast augenblicklich.
 
 Open Source · Kostenlos · Ohne Anmeldung. Live ausprobieren unter **[shiaho.sbs](https://shiaho.sbs)**.
 
@@ -47,6 +47,20 @@ Open Source · Kostenlos · Ohne Anmeldung. Live ausprobieren unter **[shiaho.sb
 - **Automatische Bereinigung**: Apps ohne Besuche über 30 Tage werden automatisch zurückgewonnen.
 - **Optionales Cloudflare-R2-Offload**: Downloads laufen über das CDN und sparen Origin-Bandbreite.
 - **Mehrsprachige Oberfläche**: 9 integrierte Sprachen (Englisch, vereinfachtes Chinesisch, Japanisch, Arabisch, Russisch, Spanisch, Portugiesisch, Französisch, Deutsch), folgt automatisch der Browsersprache, mit RTL-Layout für Arabisch. Manuelle Umschaltung oben rechts.
+
+## App-Größe
+
+Jedes Paket ist nur ein dünner Einstiegspunkt zu deiner Website — es bündelt keine Website-Inhalte, daher werden die Artefakte in **Kilobyte, nicht Megabyte** gemessen. Darunter nutzt es die native, leichtgewichtige Hülle jeder Plattform: ein Android-WebView-APK, ein iOS-Web-Clip-Profil und `.app` / `.bat` / `.desktop`-Launcher, die den Systembrowser im App-Modus öffnen.
+
+An einem echten Build gemessen (die Werte sind repräsentativ und variieren kaum je nach Site):
+
+| Plattform | Paket | Typische Größe | Inhalt |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **~21 KB** | Ein echtes, installierbares WebView-APK (v1+v2+v3 signiert) |
+| iOS / iPadOS | `ios.mobileconfig` | **~4 KB** | Ein Web-Clip-Konfigurationsprofil |
+| macOS | `macos.zip` | **~1,4 KB** | Ein `.app`-Bundle (Launcher-Skript + Icon) |
+| Windows | `windows.zip` | **~1,2 KB** | Ein `.bat`-Launcher + Verknüpfungshelfer + Icon |
+| Linux | `linux.tar.gz` | **~0,7 KB** | Ein `.desktop`-Eintrag + Installationsskript + Icon |
 
 ## Technologie-Stack
 

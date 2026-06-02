@@ -29,7 +29,7 @@
 ---
 
 输入一个网址，几秒钟后得到一个可以安装、可以分享、可以像应用一样使用的成品。
-一套生成结果同时覆盖 **iPhone / iPad、Android、Windows、macOS、Linux**。
+一套生成结果同时覆盖 **iPhone / iPad、Android、Windows、macOS、Linux**，每个成品都只有几 KB，下载和安装几乎瞬间完成。
 
 开源 · 免费 · 无需登录。在线体验：**[shiaho.sbs](https://shiaho.sbs)**。
 
@@ -47,6 +47,20 @@
 - **自动清理**：连续 30 天无访问的应用会被自动回收。
 - **可选 Cloudflare R2 卸载**：下载走 CDN，源站省带宽。
 - **多语言界面**：内置 9 种语言（英语、简体中文、日语、阿拉伯语、俄语、西班牙语、葡萄牙语、法语、德语），界面默认英语，右上角可手动切换，阿拉伯语支持 RTL 布局。
+
+## 应用体积
+
+每个产物都只是一个指向你网站的轻量入口，不打包站点内容，所以体积以 **KB 计，而非 MB**。底层用的是各平台原生的轻量壳：Android 的 WebView APK、iOS 的 Web Clip 描述文件、桌面端调用系统浏览器 app 模式的 `.app` / `.bat` / `.desktop` 启动器。
+
+基于真实构建实测（数据具有代表性，几乎不随站点变化）：
+
+| 平台 | 产物 | 典型体积 | 包含内容 |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **约 21 KB** | 真实可安装的 WebView APK（v1+v2+v3 签名） |
+| iOS / iPadOS | `ios.mobileconfig` | **约 4 KB** | Web Clip 配置描述文件 |
+| macOS | `macos.zip` | **约 1.4 KB** | `.app` 包（启动脚本 + 图标） |
+| Windows | `windows.zip` | **约 1.2 KB** | `.bat` 启动器 + 桌面快捷方式助手 + 图标 |
+| Linux | `linux.tar.gz` | **约 0.7 KB** | `.desktop` 条目 + 安装脚本 + 图标 |
 
 ## 技术栈
 

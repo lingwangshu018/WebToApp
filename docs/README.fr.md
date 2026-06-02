@@ -29,7 +29,7 @@ Un lien en entrée, des produits finis pour **iPhone / iPad · Android · Window
 ---
 
 Saisissez une URL et, quelques secondes plus tard, obtenez un produit fini que vous pouvez installer, partager et utiliser comme une application.
-Un seul résultat généré couvre **iPhone / iPad, Android, Windows, macOS et Linux**.
+Un seul résultat généré couvre **iPhone / iPad, Android, Windows, macOS et Linux**, et chacun ne pèse que quelques Ko — il se télécharge et s'installe donc quasi instantanément.
 
 Open source · Gratuit · Sans inscription. Essayez-le en direct sur **[shiaho.sbs](https://shiaho.sbs)**.
 
@@ -47,6 +47,20 @@ Open source · Gratuit · Sans inscription. Essayez-le en direct sur **[shiaho.s
 - **Nettoyage automatique** : les applications sans visite pendant 30 jours sont automatiquement récupérées.
 - **Déchargement Cloudflare R2 optionnel** : les téléchargements passent par le CDN, économisant la bande passante de l'origine.
 - **Interface multilingue** : 9 langues intégrées (anglais, chinois simplifié, japonais, arabe, russe, espagnol, portugais, français, allemand), qui suit automatiquement la langue du navigateur, avec une mise en page RTL pour l'arabe. Changez-la manuellement dans le coin supérieur droit.
+
+## Taille de l'app
+
+Chaque paquet n'est qu'un point d'entrée léger vers votre site — il n'embarque aucun contenu du site, donc les artefacts se mesurent en **kilo-octets, pas en méga-octets**. En interne, il utilise la coque légère native de chaque plateforme : un APK WebView Android, un profil Web Clip iOS, et des lanceurs `.app` / `.bat` / `.desktop` qui ouvrent le navigateur système en mode application sur desktop.
+
+Mesuré sur un build réel (les chiffres sont représentatifs ; ils varient à peine selon le site) :
+
+| Plateforme | Paquet | Taille typique | Contenu |
+| --- | --- | --- | --- |
+| Android | `android.apk` | **~21 Ko** | Un vrai APK WebView installable (signé v1+v2+v3) |
+| iOS / iPadOS | `ios.mobileconfig` | **~4 Ko** | Un profil de configuration Web Clip |
+| macOS | `macos.zip` | **~1,4 Ko** | Un bundle `.app` (script de lancement + icône) |
+| Windows | `windows.zip` | **~1,2 Ko** | Un lanceur `.bat` + aide-raccourci + icône |
+| Linux | `linux.tar.gz` | **~0,7 Ko** | Une entrée `.desktop` + script d'installation + icône |
 
 ## Pile technique
 
