@@ -189,7 +189,7 @@ class Distiller:
             return {}
         try:
             return r2_storage.upload_app_downloads(app_id, downloads_dir)
-        except Exception as exc:  # noqa: BLE001 - upstream is third-party SDK
+        except Exception as exc:  # noqa: BLE001 - network/storage errors are non-fatal
             print(f"[Storage] R2 upload failed for {app_id}: {exc}")
             return {}
 
