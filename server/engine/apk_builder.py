@@ -51,9 +51,11 @@ import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -66,12 +68,71 @@ public class M extends Activity {
     private static final String DESKTOP_USER_AGENT =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+    // Ad/tracker network hostnames to block at the network layer.
+    // Requests to these hosts return an empty 200 response so the site
+    // never sees an error — it just receives nothing, silently.
+    private static final String[] AD_HOSTS = {
+        "doubleclick.net",
+        "googlesyndication.com",
+        "adservice.google.com",
+        "amazon-adsystem.com",
+        "ads.yahoo.com",
+        "googletagmanager.com",
+        "googletagservices.com",
+        "adnxs.com",
+        "adsystem.amazon.com",
+        "pagead2.googlesyndication.com",
+        "tpc.googlesyndication.com",
+        "securepubads.g.doubleclick.net",
+        "pubads.g.doubleclick.net",
+        "ads.rubiconproject.com",
+        "pixel.rubiconproject.com",
+        "ib.adnxs.com",
+        "cdn.taboola.com",
+        "trc.taboola.com",
+        "cdn.outbrain.com",
+        "widgets.outbrain.com",
+        "popads.net",
+        "popcash.net",
+        "juicyads.com",
+        "exoclick.com",
+        "trafficjunky.net",
+        "adsterra.com",
+        "hilltopads.net",
+        "propellerads.com",
+        "adcash.com",
+        "revcontent.com",
+        "mgid.com",
+        "trafficfactory.biz",
+    };
+
     private WebView webView;
     private AppConfig config;
     private PendingDownload pendingDownload;
     private GeolocationPermissions.Callback pendingGeolocationCallback;
     private String pendingGeolocationOrigin;
     private PermissionRequest pendingPermissionRequest;
+
+    /** Returns true if the given URL host matches any blocked ad network. */
+    private boolean isAdHost(String host) {
+        if (host == null || host.isEmpty()) return false;
+        String lower = host.toLowerCase(Locale.US);
+        for (String blocked : AD_HOSTS) {
+            if (lower.equals(blocked) || lower.endsWith("." + blocked)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Returns an empty, successful WebResourceResponse used to silently swallow ad requests. */
+    private WebResourceResponse emptyResponse() {
+        return new WebResourceResponse(
+            "text/plain", "utf-8",
+            new ByteArrayInputStream(new byte[0])
+        );
+    }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -86,6 +147,36 @@ public class M extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handleNavigation(url);
             }
+            // ── Ad blocker ────────────────────────────────────────────────
+            // Intercept every sub-resource request. If the host belongs to a
+            // known ad/tracker network, return an empty response instead of
+            // letting the request reach the network. This blocks ads at the
+            // network layer so no ad scripts execute and no popups fire, while
+            // all other requests (video, images, API calls) pass through unchanged.
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (request != null && request.getUrl() != null) {
+                    String host = request.getUrl().getHost();
+                    if (isAdHost(host)) {
+                        return emptyResponse();
+                    }
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+            // Legacy API (< API 21) — same logic for older devices.
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                if (url != null) {
+                    try {
+                        String host = Uri.parse(url).getHost();
+                        if (isAdHost(host)) {
+                            return emptyResponse();
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                return super.shouldInterceptRequest(view, url);
+            }
+            // ─────────────────────────────────────────────────────────────
         });
         webView.setWebChromeClient(new AppChromeClient());
         webView.setDownloadListener(new AppDownloadListener());
