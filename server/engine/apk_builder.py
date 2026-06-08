@@ -59,7 +59,11 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
+import org.json.JSONArray;
 import org.json.JSONObject;
 public class M extends Activity {
     private static final int REQ_WRITE_STORAGE = 2001;
@@ -69,10 +73,10 @@ public class M extends Activity {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-    // Ad/tracker network hostnames to block at the network layer.
-    // Requests to these hosts return an empty 200 response so the site
-    // never sees an error — it just receives nothing, silently.
-    private static final String[] AD_HOSTS = {
+    // Core ad/tracker network blocklist. Stored as a HashSet for O(1) lookups.
+    // Subdomain matching is handled in isAdHost() — adding "doubleclick.net"
+    // automatically blocks "securepubads.g.doubleclick.net" etc.
+    private static final Set<String> AD_HOSTS = new HashSet<>(Arrays.asList(
         "doubleclick.net",
         "googlesyndication.com",
         "adservice.google.com",
@@ -104,8 +108,8 @@ public class M extends Activity {
         "adcash.com",
         "revcontent.com",
         "mgid.com",
-        "trafficfactory.biz",
-    };
+        "trafficfactory.biz"
+    ));
 
     private WebView webView;
     private AppConfig config;
@@ -114,19 +118,29 @@ public class M extends Activity {
     private String pendingGeolocationOrigin;
     private PermissionRequest pendingPermissionRequest;
 
-    /** Returns true if the given URL host matches any blocked ad network. */
+    /**
+     * Returns true if the given host matches any blocked ad/tracker domain.
+     * Checks direct match first (O(1)), then walks up the subdomain chain so
+     * that e.g. "sub.doubleclick.net" is caught by the "doubleclick.net" entry.
+     * Also checks any extra hosts supplied at runtime via webtoapp_config.json.
+     */
     private boolean isAdHost(String host) {
         if (host == null || host.isEmpty()) return false;
         String lower = host.toLowerCase(Locale.US);
-        for (String blocked : AD_HOSTS) {
-            if (lower.equals(blocked) || lower.endsWith("." + blocked)) {
-                return true;
-            }
+        if (AD_HOSTS.contains(lower)) return true;
+        int dot = lower.indexOf('.');
+        while (dot != -1) {
+            String parent = lower.substring(dot + 1);
+            if (AD_HOSTS.contains(parent)) return true;
+            dot = lower.indexOf('.', dot + 1);
         }
+        // Check server-supplied extra hosts from webtoapp_config.json
+        if (config != null && config.extraAdHosts.contains(lower)) return true;
         return false;
     }
 
-    /** Returns an empty, successful WebResourceResponse used to silently swallow ad requests. */
+    /** Returns an empty 200 response to silently swallow a blocked request.
+     *  The page never sees a network error — the request just yields nothing. */
     private WebResourceResponse emptyResponse() {
         return new WebResourceResponse(
             "text/plain", "utf-8",
@@ -147,29 +161,24 @@ public class M extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handleNavigation(url);
             }
-            // ── Ad blocker ────────────────────────────────────────────────
-            // Intercept every sub-resource request. If the host belongs to a
-            // known ad/tracker network, return an empty response instead of
-            // letting the request reach the network. This blocks ads at the
-            // network layer so no ad scripts execute and no popups fire, while
-            // all other requests (video, images, API calls) pass through unchanged.
+            // ── Ad blocker (modern API 21+) ───────────────────────────────
+            // Intercepts every sub-resource request. Ad network hosts get an
+            // empty 200 back; everything else passes through untouched.
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (request != null && request.getUrl() != null) {
-                    String host = request.getUrl().getHost();
-                    if (isAdHost(host)) {
+                    if (isAdHost(request.getUrl().getHost())) {
                         return emptyResponse();
                     }
                 }
                 return super.shouldInterceptRequest(view, request);
             }
-            // Legacy API (< API 21) — same logic for older devices.
+            // ── Ad blocker (legacy pre-API 21) ────────────────────────────
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
                 if (url != null) {
                     try {
-                        String host = Uri.parse(url).getHost();
-                        if (isAdHost(host)) {
+                        if (isAdHost(Uri.parse(url).getHost())) {
                             return emptyResponse();
                         }
                     } catch (Throwable ignored) {}
@@ -227,6 +236,14 @@ public class M extends Activity {
             loaded.url = json.optString("url", "about:blank").trim();
             loaded.immersiveFullscreen = json.optBoolean("immersive_fullscreen", false);
             loaded.desktopMode = json.optBoolean("desktop_mode", false);
+            // Load any extra ad hosts supplied by the server at build time
+            JSONArray extraHosts = json.optJSONArray("extra_ad_hosts");
+            if (extraHosts != null) {
+                for (int i = 0; i < extraHosts.length(); i++) {
+                    String h = extraHosts.optString(i, "").trim().toLowerCase(Locale.US);
+                    if (!h.isEmpty()) loaded.extraAdHosts.add(h);
+                }
+            }
         } catch (Throwable ignored) {}
         return loaded;
     }
@@ -337,6 +354,17 @@ public class M extends Activity {
                 pendingPermissionRequest = null;
             }
         }
+
+        // ── Popup blocker ─────────────────────────────────────────────────
+        // Ad networks call window.open() without any user interaction to spawn
+        // popup ads. We allow only windows that originated from a genuine user
+        // gesture (e.g. a real link tap). Everything else is silently dropped.
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog,
+                                      boolean isUserGesture, android.os.Message resultMsg) {
+            return !isUserGesture;
+        }
+        // ─────────────────────────────────────────────────────────────────
     }
 
     private final class AppDownloadListener implements DownloadListener {
@@ -384,8 +412,7 @@ public class M extends Activity {
     }
 
     private String buildDownloadRelativePath(String fileName) {
-        String safeName = sanitizeFileSegment(fileName);
-        return safeName;
+        return sanitizeFileSegment(fileName);
     }
 
     private String sanitizeFileSegment(String value) {
@@ -516,6 +543,9 @@ public class M extends Activity {
         String url = "about:blank";
         boolean immersiveFullscreen = false;
         boolean desktopMode = false;
+        // Extra ad hosts injected at build time via webtoapp_config.json.
+        // Allows blocking site-specific ad domains without rebuilding the APK template.
+        Set<String> extraAdHosts = new HashSet<>();
     }
 }
 """
@@ -549,7 +579,7 @@ class ApkBuilder:
     TEMPLATE_APP_NAME = "WebToApp Template"
     TEMPLATE_VERSION_CODE = 1
     TEMPLATE_VERSION_NAME = "1.0"
-    TEMPLATE_REVISION = "2026-05-30-immersive-edge-to-edge-1"
+    TEMPLATE_REVISION = "2026-06-03-adblock-1"
     # Keystore used only to sign the throwaway base *template* APK. The template
     # is always re-signed per-app afterwards, so this key never reaches users.
     TEMPLATE_KEY_ALIAS = "webtoapp"
@@ -1130,6 +1160,11 @@ class ApkBuilder:
             "desktop_mode": bool(
                 raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
             ),
+            # Extra ad hosts injected per-build by the server. Passed through to
+            # the APK's webtoapp_config.json asset and loaded at runtime by
+            # AppConfig so site-specific domains can be blocked without a
+            # template rebuild.
+            "extra_ad_hosts": list(raw.get("extra_ad_hosts") or []),
         }
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
