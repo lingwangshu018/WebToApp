@@ -7,9 +7,12 @@ import asyncio
 import base64
 import httpx
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from server.engine.distiller import Distiller
+from server.htmlmeta import parse_html_metadata
+from server.net import aread_limited_response, avalidate_public_http_url, redirect_target
+from server import config
 
 
 # Common ad/tracker domains
@@ -38,7 +41,7 @@ class SiteAnalyzer:
 
     def __init__(self):
         self.client = httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=15.0,
             headers={"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"},
         )
@@ -47,19 +50,32 @@ class SiteAnalyzer:
     async def analyze(self, url: str) -> dict:
         if not url.startswith('http'):
             url = 'https://' + url
+        final_url, html, content_length = await self._fetch_page(url)
+        return await self._analyze_html(final_url, html, content_length)
+
+    async def _fetch_page(self, url: str) -> tuple[str, str, int]:
+        current_url = await avalidate_public_http_url(url)
+        for _ in range(config.outbound_redirect_limit() + 1):
+            async with self.client.stream("GET", current_url) as resp:
+                if resp.status_code in {301, 302, 303, 307, 308}:
+                    current_url = await asyncio.to_thread(redirect_target, current_url, resp.headers.get("location", ""))
+                    continue
+                resp.raise_for_status()
+                raw = await aread_limited_response(resp, config.outbound_response_max_bytes())
+                encoding = getattr(resp, "encoding", None) or "utf-8"
+                return current_url, raw.decode(encoding, errors="ignore"), len(raw)
+        raise httpx.TooManyRedirects(f"Exceeded redirect limit for {url}")
+
+    async def _analyze_html(self, url: str, html: str, content_length: int) -> dict:
         parsed = urlparse(url)
         host = parsed.hostname or ''
+        doc = parse_html_metadata(html)
 
-        resp = await self.client.get(url)
-        resp.raise_for_status()
-        html = resp.text
-        content_length = len(resp.content)
-
-        title = self._extract_tag(html, 'title') or host
-        site_name, site_name_source = self._extract_site_name(html)
-        description = self._extract_meta(html, 'description')
-        theme_color = self._extract_meta(html, 'theme-color') or '#7c3aed'
-        favicon = self._extract_favicon(html, url)
+        title = doc.title or host
+        site_name, site_name_source = self._extract_site_name(doc)
+        description = doc.meta_content('description', 'og:description')
+        theme_color = doc.meta_content('theme-color') or '#7c3aed'
+        favicon = self._extract_favicon(doc, url)
         favicon_data_url = await asyncio.to_thread(self._favicon_data_url, url)
         suggested_name, suggested_name_source = self._suggest_app_name(
             title,
@@ -68,17 +84,12 @@ class SiteAnalyzer:
             site_name_source,
         )
 
-        # Detect bloat
-        scripts = re.findall(r'<script[^>]*src=["\']([^"\']+)', html)
+        scripts = list(doc.script_srcs)
         ad_scripts = [s for s in scripts if any(ad in s for ad in AD_DOMAINS)]
         tracker_scripts = [s for s in scripts if self._is_tracker(s)]
         popup_elements = sum(1 for p in POPUP_PATTERNS if re.search(p, html, re.I))
-
-        # Size analysis
-        style_blocks = re.findall(r'<style[^>]*>(.*?)</style>', html, re.S)
-        inline_css_size = sum(len(s) for s in style_blocks)
-        script_blocks = re.findall(r'<script[^>]*>(.*?)</script>', html, re.S)
-        inline_js_size = sum(len(s) for s in script_blocks)
+        inline_css_size = doc.inline_style_size
+        inline_js_size = doc.inline_script_size
         total_bloat = len(ad_scripts) * 45000 + inline_js_size * 0.3  # estimated
 
         original_kb = content_length / 1024
@@ -112,16 +123,6 @@ class SiteAnalyzer:
             "distilledSize": f"{estimated_distilled_kb:.0f} KB",
             "speedBoost": f"{speed_boost}x",
         }
-
-    def _extract_tag(self, html: str, tag: str) -> str:
-        m = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html, re.I | re.S)
-        return m.group(1).strip() if m else ''
-
-    def _extract_meta(self, html: str, name: str) -> str:
-        m = re.search(rf'<meta[^>]*(?:name|property)=["\'](?:og:)?{name}["\'][^>]*content=["\']([^"\']*)', html, re.I)
-        if not m:
-            m = re.search(rf'<meta[^>]*content=["\']([^"\']*)["\'][^>]*(?:name|property)=["\'](?:og:)?{name}', html, re.I)
-        return m.group(1) if m else ''
 
     def _estimate_distilled_metrics(
         self,
@@ -167,11 +168,11 @@ class SiteAnalyzer:
         speed_boost = max(round(original_kb / max(estimated_distilled_kb, 0.5), 1), 1.1)
         return estimated_distilled_kb, speed_boost
 
-    def _extract_site_name(self, html: str) -> tuple[str, str]:
+    def _extract_site_name(self, doc) -> tuple[str, str]:
         candidates = [
-            ("site_name", self._extract_meta(html, 'site_name')),
-            ("application_name", self._extract_meta(html, 'application-name')),
-            ("apple_mobile_web_app_title", self._extract_meta(html, 'apple-mobile-web-app-title')),
+            ("site_name", doc.meta_content('og:site_name', 'site_name')),
+            ("application_name", doc.meta_content('application-name')),
+            ("apple_mobile_web_app_title", doc.meta_content('apple-mobile-web-app-title')),
         ]
         for source, value in candidates:
             if self._normalize_text(value):
@@ -244,13 +245,11 @@ class SiteAnalyzer:
             return text
         return text[:40].rstrip() + "..."
 
-    def _extract_favicon(self, html: str, base_url: str) -> str:
-        m = re.search(r'<link[^>]*rel=["\'](?:shortcut )?icon["\'][^>]*href=["\']([^"\']+)', html, re.I)
-        if m:
-            href = m.group(1)
-            if href.startswith('//'): return 'https:' + href
-            if href.startswith('/'): return urlparse(base_url)._replace(path=href).geturl()
-            if href.startswith('http'): return href
+    def _extract_favicon(self, doc, base_url: str) -> str:
+        for attrs in doc.link_attrs_by_rel('apple-touch-icon', 'icon'):
+            href = attrs.get("href", "").strip()
+            if href:
+                return urljoin(base_url, href)
         parsed = urlparse(base_url)
         return f"https://www.google.com/s2/favicons?domain={parsed.hostname}&sz=64"
 

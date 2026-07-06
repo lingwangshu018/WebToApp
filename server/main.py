@@ -5,12 +5,15 @@ FastAPI backend: site analysis, content distillation, app generation & download.
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
 import shutil
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -95,7 +98,8 @@ ROOT = Path(__file__).parent.parent
 APPS_DIR = ROOT / "generated"
 APPS_DIR.mkdir(exist_ok=True)
 history_store = HistoryStore(APPS_DIR / "_history.json")
-_recipe_cache = {}
+_recipe_cache = OrderedDict()
+_recipe_cache_lock = threading.RLock()
 
 analyzer = SiteAnalyzer()
 distiller = Distiller()
@@ -107,12 +111,26 @@ http_client = httpx.AsyncClient(
     headers={"User-Agent": "WebToApp/1.0 (+https://github.com/)"},
 )
 SUPPORTED_PLATFORM_COUNT = 5
-DISTILL_WORKER_COUNT = 1
+DISTILL_WORKER_COUNT = config.distill_worker_count()
+RECIPE_CACHE_SIZE = config.recipe_cache_size()
 DISTILL_TASK_TTL_SECONDS = 6 * 60 * 60
 DISTILL_TASK_MAX_FINISHED = 256
 APP_RETENTION_DAYS = 30
 APP_RETENTION_SWEEP_INTERVAL_SECONDS = 60 * 60
 RATE_LIMIT_BUCKET_TTL = 5 * 60  # forget IPs idle for this long
+
+
+def _trusted_proxy_networks():
+    networks = []
+    for raw in config.trusted_proxy_cidrs():
+        try:
+            networks.append(ipaddress.ip_network(raw, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+TRUSTED_PROXY_NETWORKS = _trusted_proxy_networks()
 
 def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -297,15 +315,15 @@ async def analyze_url(req: AnalyzeRequest):
 
 
 def _resolve_base_url(request: Request) -> str:
-    """Best effort: use PUBLIC_BASE_URL env var, else reconstruct from request."""
     configured = config.public_base_url()
     if configured:
         return configured
-    # Trust the Host/X-Forwarded-* headers set by the request.
-    # For local testing this yields http://localhost:8000 which is fine for
-    # the dev box but won't work on an iPhone — set PUBLIC_BASE_URL in prod.
-    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if _request_is_from_trusted_proxy(request):
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    else:
+        scheme = request.url.scheme
+        host = request.headers.get("host") or request.url.netloc
     return f"{scheme}://{host}".rstrip("/")
 
 
@@ -317,9 +335,7 @@ def _public_recipe(recipe: dict) -> dict:
 
 
 def _device_fingerprint(request: Request) -> Optional[str]:
-    raw = str(request.headers.get("x-device-fingerprint", "") or "").strip()
-    if not raw:
-        raw = str(request.cookies.get("webtoapp_device_fingerprint", "") or "").strip()
+    raw = str(request.cookies.get("webtoapp_device_fingerprint", "") or "").strip()
     if not raw:
         return None
     cleaned = re.sub(r"[^A-Za-z0-9._:-]", "", raw)[:160]
@@ -400,17 +416,34 @@ retention_task = None
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Trusts X-Forwarded-For only behind a known proxy."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        first = forwarded.split(",", 1)[0].strip()
-        if first:
-            return first
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
+    if _request_is_from_trusted_proxy(request):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            first = _normalized_ip(forwarded.split(",", 1)[0].strip())
+            if first:
+                return first
+        real_ip = _normalized_ip(request.headers.get("x-real-ip", "").strip())
+        if real_ip:
+            return real_ip
     client = request.client
-    return client.host if client else "unknown"
+    direct_ip = _normalized_ip(client.host if client else "")
+    return direct_ip or "unknown"
+
+
+def _normalized_ip(value: str) -> str:
+    try:
+        return str(ipaddress.ip_address(str(value or "").strip()))
+    except ValueError:
+        return ""
+
+
+def _request_is_from_trusted_proxy(request: Request) -> bool:
+    client = request.client
+    client_ip = _normalized_ip(client.host if client else "")
+    if not client_ip:
+        return False
+    parsed = ipaddress.ip_address(client_ip)
+    return any(parsed in network for network in TRUSTED_PROXY_NETWORKS)
 
 
 def _purge_expired_generated_apps() -> int:
@@ -430,8 +463,9 @@ def _purge_expired_generated_apps() -> int:
     if not removed_ids:
         return 0
     history_store.purge_apps(removed_ids)
-    for app_id in removed_ids:
-        _recipe_cache.pop(app_id, None)
+    with _recipe_cache_lock:
+        for app_id in removed_ids:
+            _recipe_cache.pop(app_id, None)
     if r2_storage.configured:
         for app_id in removed_ids:
             try:
@@ -718,11 +752,17 @@ def _load_recipe(app_id: str) -> dict:
         raise HTTPException(404, "App not found")
     stat = recipe_path.stat()
     cache_key = (str(recipe_path), stat.st_mtime_ns, stat.st_size)
-    cached = _recipe_cache.get(app_id)
-    if cached and cached.get("key") == cache_key:
-        return deepcopy(cached["value"])
+    with _recipe_cache_lock:
+        cached = _recipe_cache.get(app_id)
+        if cached and cached.get("key") == cache_key:
+            _recipe_cache.move_to_end(app_id)
+            return deepcopy(cached["value"])
     value = json.loads(recipe_path.read_text())
-    _recipe_cache[app_id] = {"key": cache_key, "value": value}
+    with _recipe_cache_lock:
+        _recipe_cache[app_id] = {"key": cache_key, "value": value}
+        _recipe_cache.move_to_end(app_id)
+        while len(_recipe_cache) > RECIPE_CACHE_SIZE:
+            _recipe_cache.popitem(last=False)
     return deepcopy(value)
 
 

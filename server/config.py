@@ -102,6 +102,46 @@ def daily_build_quota_per_device() -> int:
         return 10
 
 
+def distill_worker_count() -> int:
+    try:
+        return max(1, int(os.environ.get("DISTILL_WORKER_COUNT", "1").strip() or "1"))
+    except ValueError:
+        return 1
+
+
+def recipe_cache_size() -> int:
+    try:
+        return max(1, int(os.environ.get("RECIPE_CACHE_SIZE", "512").strip() or "512"))
+    except ValueError:
+        return 512
+
+
+def outbound_response_max_bytes() -> int:
+    try:
+        return max(65536, int(os.environ.get("OUTBOUND_RESPONSE_MAX_BYTES", "4194304").strip() or "4194304"))
+    except ValueError:
+        return 4194304
+
+
+def outbound_redirect_limit() -> int:
+    try:
+        return max(0, int(os.environ.get("OUTBOUND_REDIRECT_LIMIT", "4").strip() or "4"))
+    except ValueError:
+        return 4
+
+
+def trusted_proxy_cidrs() -> list[str]:
+    raw = os.environ.get("TRUSTED_PROXY_CIDRS", "").strip()
+    if not raw:
+        return ["127.0.0.1/32", "::1/128"]
+    values = []
+    for chunk in raw.split(","):
+        token = chunk.strip()
+        if token:
+            values.append(token)
+    return values or ["127.0.0.1/32", "::1/128"]
+
+
 # ---------- Cloudflare R2 (S3-compatible) ----------
 #
 # Set ALL of the following to enable R2 offload. Once configured, every

@@ -21,7 +21,8 @@ from server import config
 from server.engine.apk_builder import ApkBuilder
 from server.engine import mobileconfig_signer
 from server.engine.storage import r2_storage
-from urllib.request import urlopen, Request
+from server.htmlmeta import parse_html_metadata
+from server.net import fetch_public_url_bytes
 
 
 class Distiller:
@@ -247,54 +248,54 @@ class Distiller:
             return None
 
     def _fetch_url_bytes(self, url, timeout=8):
-        """GET that returns response bytes, or None on any failure."""
         try:
-            req = Request(url, headers={"User-Agent": self.USER_AGENT})
-            with urlopen(req, timeout=timeout) as resp:
-                if 200 <= resp.status < 300:
-                    return resp.read()
+            return fetch_public_url_bytes(
+                url,
+                timeout=timeout,
+                headers={"User-Agent": self.USER_AGENT},
+                max_bytes=config.outbound_response_max_bytes(),
+                max_redirects=config.outbound_redirect_limit(),
+            )
         except Exception:
             pass
         return None
 
     def _collect_icon_candidates(self, page_url):
-        """Return de-duped list of icon URLs sorted by preferred size (largest first)."""
-        scored = []  # list of (priority, url)
+        scored = []
         parsed = urlparse(page_url)
         base = f"{parsed.scheme}://{parsed.netloc}"
-
-        # Strategy 1: parse the page HTML for declared icons
         html_bytes = self._fetch_url_bytes(page_url, timeout=10)
         html = html_bytes.decode("utf-8", errors="ignore") if html_bytes else ""
 
         if html:
-            # apple-touch-icon (typically 180x180+ on iOS sites)
-            for tag, href in self._iter_link_tags(html, r"apple-touch-icon(?:-precomposed)?"):
-                size = self._extract_sizes_attr(tag)
+            doc = parse_html_metadata(html)
+            for attrs in doc.link_attrs_by_rel("apple-touch-icon", "apple-touch-icon-precomposed"):
+                href = attrs.get("href", "").strip()
+                if not href:
+                    continue
+                size = self._extract_sizes_value(attrs.get("sizes", ""))
                 scored.append((1000 + size, urljoin(page_url, href)))
 
-            # rel="icon" / "shortcut icon"
-            for tag, href in self._iter_link_tags(html, r"(?:shortcut\s+)?icon"):
-                size = self._extract_sizes_attr(tag)
-                # PNGs preferred over .ico
+            for attrs in doc.link_attrs_by_rel("icon"):
+                href = attrs.get("href", "").strip()
+                if not href:
+                    continue
+                size = self._extract_sizes_value(attrs.get("sizes", ""))
                 bonus = 50 if href.lower().endswith(".png") else 0
                 scored.append((500 + size + bonus, urljoin(page_url, href)))
 
-            # PWA manifest → may contain icons
-            for _, href in self._iter_link_tags(html, r"manifest"):
-                manifest_url = urljoin(page_url, href)
+            for attrs in doc.link_attrs_by_rel("manifest"):
+                manifest_href = attrs.get("href", "").strip()
+                if not manifest_href:
+                    continue
+                manifest_url = urljoin(page_url, manifest_href)
                 for size, icon_url in self._icons_from_manifest(manifest_url):
                     scored.append((900 + size, icon_url))
 
-            # msapplication-TileImage (Windows tile icon, often 144x144 PNG)
-            m = re.search(
-                r'<meta[^>]*name=["\']msapplication-TileImage["\'][^>]*content=["\']([^"\']+)',
-                html, re.I,
-            )
-            if m:
-                scored.append((400, urljoin(page_url, m.group(1))))
+            tile_href = doc.meta_content("msapplication-tileimage")
+            if tile_href:
+                scored.append((400, urljoin(page_url, tile_href)))
 
-        # Strategy 2: well-known fallback paths
         for prio, path in [
             (300, "/apple-touch-icon.png"),
             (290, "/apple-touch-icon-precomposed.png"),
@@ -304,11 +305,7 @@ class Distiller:
             (200, "/favicon.ico"),
         ]:
             scored.append((prio, base + path))
-
-        # Strategy 3: Google's favicon service (last resort, often low-res)
         scored.append((100, f"https://www.google.com/s2/favicons?domain={parsed.netloc}&sz=256"))
-
-        # De-dupe while preserving highest-priority order
         seen = set()
         ordered = []
         for _, u in sorted(scored, key=lambda x: -x[0]):
@@ -317,30 +314,11 @@ class Distiller:
                 ordered.append(u)
         return ordered
 
-    def _iter_link_tags(self, html, rel_pattern):
-        """Yield (full_tag, href) for every <link rel="<rel_pattern>" href="..."> match.
-        Tolerates attributes appearing in any order."""
-        tag_re = re.compile(r"<link\b[^>]*>", re.I)
-        rel_re = re.compile(rf'\brel\s*=\s*["\']({rel_pattern})["\']', re.I)
-        href_re = re.compile(r'\bhref\s*=\s*["\']([^"\']+)', re.I)
-        for tm in tag_re.finditer(html):
-            tag = tm.group(0)
-            if not rel_re.search(tag):
-                continue
-            hm = href_re.search(tag)
-            if hm:
-                yield tag, hm.group(1)
-
-    def _extract_sizes_attr(self, tag):
-        """Return numeric size from a `sizes="WxH"` attribute, or 0 if absent.
-        `sizes="any"` (typically SVG) gets a high pseudo-size."""
-        m = re.search(r'\bsizes\s*=\s*["\']([^"\']+)', tag, re.I)
-        if not m:
-            return 0
-        s = m.group(1).lower()
-        if "any" in s:
+    def _extract_sizes_value(self, value):
+        sizes = str(value or "").lower()
+        if "any" in sizes:
             return 512
-        nums = re.findall(r"(\d+)\s*x\s*\d+", s)
+        nums = re.findall(r"(\d+)\s*x\s*\d+", sizes)
         return max((int(n) for n in nums), default=0)
 
     def _icons_from_manifest(self, manifest_url):
