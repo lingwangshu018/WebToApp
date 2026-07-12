@@ -50,3 +50,5 @@ class TTLCache:
 
 html_cache = TTLCache(max_size=128, ttl_seconds=900)
 icon_cache = TTLCache(max_size=256, ttl_seconds=3600)
+
+analysis_cache = TTLCache(max_size=128, ttl_seconds=600)

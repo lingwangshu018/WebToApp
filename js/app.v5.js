@@ -711,7 +711,6 @@
     analysisBody.innerHTML = `<div class="analysis-loader"><div class="loader-bar"></div><p id="loader-text">${escapeHtml(t('analysis.fetching'))}</p></div>`;
     scheduleGentleScroll(workspace, { block: 'start', threshold: 0.55, delay: 120 });
 
-    // Simulate analysis steps
     const steps = [
       t('analysis.stepFetch'),
       t('analysis.stepDom'),
@@ -719,13 +718,14 @@
       t('analysis.stepDesign'),
       t('analysis.stepOptimize'),
     ];
-    for (let i = 0; i < steps.length; i++) {
-      await sleep(600 + Math.random() * 400);
+    let stepIndex = 0;
+    const loaderTimer = setInterval(() => {
       const loader = document.getElementById('loader-text');
-      if (loader) loader.textContent = steps[i];
-    }
+      if (!loader) return;
+      loader.textContent = steps[Math.min(stepIndex, steps.length - 1)];
+      stepIndex += 1;
+    }, 450);
 
-    // Try real API first, fallback to simulation
     let data;
     try {
       const res = await fetch('/api/analyze', {
@@ -734,7 +734,10 @@
         body: JSON.stringify({ url }),
       });
       if (res.ok) data = await res.json();
-    } catch { /* fallback to simulated data */ }
+    } catch (_err) {
+    } finally {
+      clearInterval(loaderTimer);
+    }
 
     if (!data) data = simulateAnalysis(url);
     showAnalysisResults(data);

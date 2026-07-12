@@ -10,6 +10,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from server.engine.distiller import Distiller
+from server.engine.cache import analysis_cache, html_cache, icon_cache
 from server.htmlmeta import parse_html_metadata
 from server.net import aread_limited_response, avalidate_public_http_url, redirect_target
 from server import config
@@ -50,12 +51,27 @@ class SiteAnalyzer:
     async def analyze(self, url: str) -> dict:
         if not url.startswith('http'):
             url = 'https://' + url
-        final_url, html, content_length = await self._fetch_page(url)
-        return await self._analyze_html(final_url, html, content_length)
+        cache_key = f"analyze:{url}"
+        cached = analysis_cache.get(cache_key)
+        if cached is not None:
+            return dict(cached)
+        final_url, html, content_length, raw = await self._fetch_page(url)
+        if raw is not None:
+            html_cache.set(f"bytes:{final_url}", raw)
+            if final_url != url:
+                html_cache.set(f"bytes:{url}", raw)
+        result = await self._analyze_html(final_url, html, content_length)
+        analysis_cache.set(cache_key, dict(result))
+        if final_url != url:
+            analysis_cache.set(f"analyze:{final_url}", dict(result))
+        return result
 
-    async def _fetch_page(self, url: str) -> tuple[str, str, int]:
+    async def _fetch_page(self, url: str) -> tuple[str, str, int, bytes]:
         current_url = await avalidate_public_http_url(url)
         for _ in range(config.outbound_redirect_limit() + 1):
+            cached = html_cache.get(f"bytes:{current_url}")
+            if cached is not None:
+                return current_url, cached.decode("utf-8", errors="ignore"), len(cached), cached
             async with self.client.stream("GET", current_url) as resp:
                 if resp.status_code in {301, 302, 303, 307, 308}:
                     current_url = await asyncio.to_thread(redirect_target, current_url, resp.headers.get("location", ""))
@@ -63,7 +79,7 @@ class SiteAnalyzer:
                 resp.raise_for_status()
                 raw = await aread_limited_response(resp, config.outbound_response_max_bytes())
                 encoding = getattr(resp, "encoding", None) or "utf-8"
-                return current_url, raw.decode(encoding, errors="ignore"), len(raw)
+                return current_url, raw.decode(encoding, errors="ignore"), len(raw), raw
         raise httpx.TooManyRedirects(f"Exceeded redirect limit for {url}")
 
     async def _analyze_html(self, url: str, html: str, content_length: int) -> dict:
@@ -255,8 +271,14 @@ class SiteAnalyzer:
 
     def _favicon_data_url(self, url: str) -> str:
         try:
-            candidates = self.icon_distiller._collect_icon_candidates(url)
-            icon_png = self.icon_distiller._choose_best_icon(candidates)
+            host = urlparse(url).netloc.lower()
+            cache_key = f"icon:{host}"
+            icon_png = icon_cache.get(cache_key)
+            if not icon_png:
+                candidates = self.icon_distiller._collect_icon_candidates(url)
+                icon_png = self.icon_distiller._choose_best_icon(candidates)
+                if icon_png:
+                    icon_cache.set(cache_key, icon_png)
         except Exception:
             return ""
         if not icon_png:

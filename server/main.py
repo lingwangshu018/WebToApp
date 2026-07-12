@@ -32,10 +32,11 @@ from server.engine.analyzer import SiteAnalyzer
 from server.engine.distiller import Distiller
 from server.engine.recipe import RecipeStore
 from server.engine import mobileconfig_signer
-from server.engine.cache import html_cache, icon_cache
+from server.engine.cache import analysis_cache, html_cache, icon_cache
 from server.engine.storage import r2_storage
 from server.history_store import HistoryStore
 from server.logging_util import log_event, setup_logging
+from server.task_store import TaskStore
 
 app = FastAPI(title="WebToApp Distillation Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -100,6 +101,7 @@ ROOT = Path(__file__).parent.parent
 APPS_DIR = ROOT / "generated"
 APPS_DIR.mkdir(exist_ok=True)
 history_store = HistoryStore(APPS_DIR / "_history.json")
+task_store = TaskStore(APPS_DIR / "_tasks.sqlite3")
 setup_logging()
 _recipe_cache = OrderedDict()
 _recipe_cache_lock = threading.RLock()
@@ -186,18 +188,37 @@ class IPRateLimiter:
 
 
 class DistillTaskQueue:
-    def __init__(self, worker_count: int = 1):
+    def __init__(self, worker_count: int = 1, store: Optional[TaskStore] = None):
         self.worker_count = max(1, int(worker_count or 1))
         self._queue = asyncio.Queue()
         self._tasks: Dict[str, dict] = {}
         self._lock = asyncio.Lock()
         self._workers = []
+        self._store = store
         self.completed_total = 0
         self.failed_total = 0
+
+    def _persist(self, task: dict) -> None:
+        if not self._store:
+            return
+        try:
+            self._store.upsert(task)
+        except Exception as exc:
+            log_event("task_persist_failed", task_id=task.get("task_id"), error=str(exc))
 
     async def start(self) -> None:
         if self._workers:
             return
+        if self._store:
+            for task in self._store.list_resumable():
+                task = deepcopy(task)
+                task["status"] = "pending"
+                task["stage"] = "queued"
+                task["updated_at"] = _utc_now_iso()
+                self._tasks[task["task_id"]] = task
+                self._persist(task)
+                await self._queue.put(task["task_id"])
+                log_event("task_resumed", task_id=task["task_id"], app_id=task.get("app_id"))
         self._workers = [
             asyncio.create_task(self._worker_loop(index), name=f"distill-worker-{index}")
             for index in range(self.worker_count)
@@ -231,6 +252,7 @@ class DistillTaskQueue:
         async with self._lock:
             self._prune_locked()
             self._tasks[task_id] = task
+            self._persist(task)
         await self._queue.put(task_id)
         return {"task_id": task_id, "app_id": app_id, "status": "pending"}
 
@@ -238,7 +260,13 @@ class DistillTaskQueue:
         async with self._lock:
             self._prune_locked()
             task = self._tasks.get(task_id)
-            return deepcopy(task) if task else None
+            if task:
+                return deepcopy(task)
+        if self._store:
+            stored = self._store.get(task_id)
+            if stored:
+                return stored
+        return None
 
     async def set_progress(self, task_id: str, stage: str, detail: Optional[dict] = None) -> None:
         async with self._lock:
@@ -249,6 +277,7 @@ class DistillTaskQueue:
             task["stage"] = stage
             task["stage_detail"] = detail or {}
             task["updated_at"] = _utc_now_iso()
+            self._persist(task)
 
     async def _worker_loop(self, _index: int) -> None:
         while True:
@@ -264,6 +293,7 @@ class DistillTaskQueue:
                     task["status"] = "running"
                     task["stage"] = "starting"
                     task["updated_at"] = _utc_now_iso()
+                    self._persist(task)
                     payload = deepcopy(task["payload"])
                 payload = dict(payload or {})
                 payload["_task_id"] = task_id
@@ -281,6 +311,7 @@ class DistillTaskQueue:
                             task["updated_at"] = _utc_now_iso()
                             task["finished_at"] = time.time()
                             self.failed_total += 1
+                            self._persist(task)
                 else:
                     async with self._lock:
                         task = self._tasks.get(task_id)
@@ -291,6 +322,7 @@ class DistillTaskQueue:
                             task["updated_at"] = _utc_now_iso()
                             task["finished_at"] = time.time()
                             self.completed_total += 1
+                            self._persist(task)
                     log_event("distill_done", task_id=task_id, app_id=(result or {}).get("app_id"))
             finally:
                 self._queue.task_done()
@@ -307,11 +339,26 @@ class DistillTaskQueue:
                     expired.append(task_id)
         for task_id in expired:
             self._tasks.pop(task_id, None)
+            if self._store:
+                try:
+                    self._store.delete(task_id)
+                except Exception:
+                    pass
+        if self._store:
+            try:
+                self._store.prune(DISTILL_TASK_TTL_SECONDS, DISTILL_TASK_MAX_FINISHED)
+            except Exception:
+                pass
         if len(finished) <= DISTILL_TASK_MAX_FINISHED:
             return
         finished.sort()
         for _finished_at, task_id in finished[:len(finished) - DISTILL_TASK_MAX_FINISHED]:
             self._tasks.pop(task_id, None)
+            if self._store:
+                try:
+                    self._store.delete(task_id)
+                except Exception:
+                    pass
 
 
 # --- Models ---
@@ -453,7 +500,7 @@ def _run_distill_job(payload: dict, queue: Optional["DistillTaskQueue"] = None, 
     return _build_distill_response(payload, progress_cb=progress_cb)
 
 
-distill_queue = DistillTaskQueue(worker_count=DISTILL_WORKER_COUNT)
+distill_queue = DistillTaskQueue(worker_count=DISTILL_WORKER_COUNT, store=task_store)
 # Cheap anti-abuse safety net for the build endpoint: ~10 submissions / minute
 # per source IP. The real quota lives on device fingerprint (see config.daily_build_quota_per_device).
 distill_rate_limiter = IPRateLimiter(max_requests=10, window_seconds=60, idle_ttl=RATE_LIMIT_BUCKET_TTL)
@@ -724,8 +771,11 @@ async def metrics():
         "caches": {
             "html": html_cache.stats(),
             "icon": icon_cache.stats(),
+            "analysis": analysis_cache.stats(),
             "recipe": {"size": len(_recipe_cache), "max_size": RECIPE_CACHE_SIZE},
         },
+        "history": history_store.stats() if hasattr(history_store, "stats") else {},
+        "tasks": task_store.stats() if hasattr(task_store, "stats") else {},
         "features": {
             "ios_signing": mobileconfig_signer.can_sign(),
             "android_apk": apk_builder_ready,

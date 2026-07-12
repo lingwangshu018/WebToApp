@@ -403,24 +403,39 @@ class Distiller:
             yield size, urljoin(manifest_url, src)
 
     def _choose_best_icon(self, candidate_urls):
-        """Try candidates in priority order. Return the largest valid PNG found.
-        Stops early at >=128px to avoid downloading every candidate."""
         best_png = None
         best_dim = 0
-        # Cap attempts so a misbehaving site can't stall the pipeline
-        for url in candidate_urls[:10]:
+        urls = list(candidate_urls[:10])
+        if not urls:
+            return None
+
+        def fetch_one(url):
             data = self._fetch_url_bytes(url, timeout=6)
             if not data:
-                continue
+                return None
             png = self._normalize_to_png(data)
             if not png:
-                continue
-            dim = self._png_dimension(png)
-            if dim > best_dim:
-                best_dim = dim
-                best_png = png
-            if best_dim >= 128:
-                break
+                return None
+            return png, self._png_dimension(png), url
+
+        workers = max(1, min(4, len(urls)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(fetch_one, url) for url in urls]
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                except Exception:
+                    continue
+                if not result:
+                    continue
+                png, dim, _url = result
+                if dim > best_dim:
+                    best_dim = dim
+                    best_png = png
+                if best_dim >= 128:
+                    for pending in futures:
+                        pending.cancel()
+                    break
         return best_png
 
     def _png_dimension(self, png_data):
