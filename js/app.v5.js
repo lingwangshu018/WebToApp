@@ -582,10 +582,14 @@
     const task = await submitRes.json();
     if (!task.task_id) throw new Error(t('err.taskSubmitFailed'));
 
-    const stageLabel = (stage) => {
+    const stageLabel = (stage, progress) => {
       const key = `generate.stage.${stage || 'running'}`;
       const translated = t(key);
-      return translated === key ? t('generate.stage.running') : translated;
+      const base = translated === key ? t('generate.stage.running') : translated;
+      if (progress && progress.total) {
+        return `${base} (${Number(progress.done || 0)}/${Number(progress.total)})`;
+      }
+      return base;
     };
     if (generateBtn) {
       generateBtn.dataset.originalText = generateBtn.textContent;
@@ -596,7 +600,7 @@
       let attempts = 0;
       while (attempts < 240) {
         attempts += 1;
-        await sleep(attempts <= 8 ? 500 : 1000);
+        await sleep(attempts <= 8 ? 400 : 800);
         const pollRes = await fetch(`/api/distill/${encodeURIComponent(task.task_id)}`, {
           headers: apiHeaders(),
         });
@@ -611,7 +615,7 @@
         }
         const payload = await pollRes.json();
         if (payload && payload.status && payload.task_id) {
-          if (generateBtn) generateBtn.textContent = stageLabel(payload.stage || payload.status);
+          if (generateBtn) generateBtn.textContent = stageLabel(payload.stage || payload.status, payload.progress);
           continue;
         }
         data = payload;
@@ -630,6 +634,21 @@
     previewFrame.src = installLink;
     previewOpenBtn.dataset.href = installLink;
     resultPanel.classList.remove('hidden');
+    const androidMeta = data.android || {};
+    let note = document.getElementById('android-fallback-note');
+    if (!note) {
+      note = document.createElement('p');
+      note.id = 'android-fallback-note';
+      note.className = 'result-note';
+      if (resultPanel) resultPanel.appendChild(note);
+    }
+    if (androidMeta.fallback && !androidMeta.apk) {
+      note.textContent = t('result.androidFallback');
+      note.classList.remove('hidden');
+    } else {
+      note.textContent = '';
+      note.classList.add('hidden');
+    }
     await loadHistory();
     scheduleGentleScroll(resultPanel, { block: 'nearest', threshold: 0.45, delay: 180 });
     return data;

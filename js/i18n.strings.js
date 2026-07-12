@@ -166,6 +166,7 @@
     'versionCode.lastValue': 'Leave blank to auto-increment (last {n})',
 
     'err.generateFailed': 'Generation failed',
+    'result.androidFallback': 'Android package is a lightweight PWA zip on this server (true APK toolchain not available).',
     'err.taskSubmitFailed': 'Task submission failed',
     'err.taskMissing': 'Task not found or expired',
     'err.generateTimeout': 'Generation timed out, please retry',
@@ -337,6 +338,7 @@
     'versionCode.lastValue': '留空则自动递增（上次 {n}）',
 
     'err.generateFailed': '生成失败',
+    'result.androidFallback': '当前服务器未配置 Android 构建链，已提供轻量 PWA 安装包（非真 APK）。',
     'err.taskSubmitFailed': '任务提交失败',
     'err.taskMissing': '任务不存在或已过期',
     'err.generateTimeout': '生成超时，请重试',
@@ -508,6 +510,7 @@
     'versionCode.lastValue': '空欄で自動インクリメント（前回 {n}）',
 
     'err.generateFailed': '生成に失敗しました',
+    'result.androidFallback': 'このサーバーでは本物の APK をビルドできないため、軽量 PWA パッケージを提供しています。',
     'err.taskSubmitFailed': 'タスクの送信に失敗しました',
     'err.taskMissing': 'タスクが存在しないか期限切れです',
     'err.generateTimeout': '生成がタイムアウトしました。再試行してください',
@@ -679,6 +682,7 @@
     'versionCode.lastValue': 'اتركه فارغًا للزيادة التلقائية (آخر مرة {n})',
 
     'err.generateFailed': 'فشل الإنشاء',
+    'result.androidFallback': 'حزمة Android خفيفة (PWA) لأن أدوات APK غير متوفرة على هذا الخادم.',
     'err.taskSubmitFailed': 'فشل إرسال المهمة',
     'err.taskMissing': 'المهمة غير موجودة أو منتهية الصلاحية',
     'err.generateTimeout': 'انتهت مهلة الإنشاء، يرجى إعادة المحاولة',
@@ -850,6 +854,7 @@
     'versionCode.lastValue': 'Оставьте пустым для автоинкремента (прошлый {n})',
 
     'err.generateFailed': 'Ошибка создания',
+    'result.androidFallback': 'На этом сервере нет Android SDK: доступен облегчённый PWA-пакет вместо APK.',
     'err.taskSubmitFailed': 'Не удалось отправить задачу',
     'err.taskMissing': 'Задача не найдена или истекла',
     'err.generateTimeout': 'Время создания истекло, повторите попытку',
@@ -1021,6 +1026,7 @@
     'versionCode.lastValue': 'Déjalo vacío para incrementar automáticamente (último {n})',
 
     'err.generateFailed': 'Error al generar',
+    'result.androidFallback': 'En este servidor no hay toolchain APK; se ofrece un paquete PWA ligero.',
     'err.taskSubmitFailed': 'Error al enviar la tarea',
     'err.taskMissing': 'Tarea no encontrada o caducada',
     'err.generateTimeout': 'Tiempo de generación agotado, inténtalo de nuevo',
@@ -1192,6 +1198,7 @@
     'versionCode.lastValue': 'Deixe em branco para incremento automático (último {n})',
 
     'err.generateFailed': 'Falha ao gerar',
+    'result.androidFallback': 'Neste servidor não há toolchain de APK; foi gerado um pacote PWA leve.',
     'err.taskSubmitFailed': 'Falha ao enviar a tarefa',
     'err.taskMissing': 'Tarefa não encontrada ou expirada',
     'err.generateTimeout': 'Tempo de geração esgotado, tente novamente',
@@ -1363,6 +1370,7 @@
     'versionCode.lastValue': 'Laissez vide pour incrémenter automatiquement (dernier {n})',
 
     'err.generateFailed': 'Échec de la génération',
+    'result.androidFallback': 'Pas de toolchain APK sur ce serveur : un paquet PWA léger est fourni.',
     'err.taskSubmitFailed': 'Échec de l\u2019envoi de la tâche',
     'err.taskMissing': 'Tâche introuvable ou expirée',
     'err.generateTimeout': 'Délai de génération dépassé, veuillez réessayer',
@@ -1534,6 +1542,7 @@
     'versionCode.lastValue': 'Leer lassen für automatische Erhöhung (zuletzt {n})',
 
     'err.generateFailed': 'Generierung fehlgeschlagen',
+    'result.androidFallback': 'Auf diesem Server ist keine APK-Toolchain verfügbar; es gibt ein leichtes PWA-Paket.',
     'err.taskSubmitFailed': 'Übermittlung der Aufgabe fehlgeschlagen',
     'err.taskMissing': 'Aufgabe nicht gefunden oder abgelaufen',
     'err.generateTimeout': 'Zeitüberschreitung bei der Generierung, bitte erneut versuchen',

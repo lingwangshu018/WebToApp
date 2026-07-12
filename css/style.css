@@ -1543,3 +1543,6 @@ section {
 [dir="rtl"] .stat {
   text-align: right;
 }
+
+.result-note{margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(201,121,83,.12);color:#8a4b2d;font-size:.92rem;line-height:1.4}
+.result-note.hidden{display:none}

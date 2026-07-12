@@ -4,6 +4,7 @@ Extracts structure, detects bloat, calculates optimization potential.
 """
 
 import asyncio
+import time
 import base64
 import httpx
 import re
@@ -51,16 +52,22 @@ class SiteAnalyzer:
     async def analyze(self, url: str) -> dict:
         if not url.startswith('http'):
             url = 'https://' + url
+        started = time.perf_counter()
         cache_key = f"analyze:{url}"
         cached = analysis_cache.get(cache_key)
         if cached is not None:
-            return dict(cached)
+            result = dict(cached)
+            result["cacheHit"] = True
+            result["durationMs"] = int((time.perf_counter() - started) * 1000)
+            return result
         final_url, html, content_length, raw = await self._fetch_page(url)
         if raw is not None:
             html_cache.set(f"bytes:{final_url}", raw)
             if final_url != url:
                 html_cache.set(f"bytes:{url}", raw)
         result = await self._analyze_html(final_url, html, content_length)
+        result["cacheHit"] = False
+        result["durationMs"] = int((time.perf_counter() - started) * 1000)
         analysis_cache.set(cache_key, dict(result))
         if final_url != url:
             analysis_cache.set(f"analyze:{final_url}", dict(result))

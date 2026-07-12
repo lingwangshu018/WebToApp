@@ -103,6 +103,8 @@ APPS_DIR.mkdir(exist_ok=True)
 history_store = HistoryStore(APPS_DIR / "_history.json")
 task_store = TaskStore(APPS_DIR / "_tasks.sqlite3")
 setup_logging()
+_analyze_stats = {"total": 0, "cache_hits": 0, "total_ms": 0}
+_analyze_stats_lock = threading.Lock()
 _recipe_cache = OrderedDict()
 _recipe_cache_lock = threading.RLock()
 
@@ -383,8 +385,22 @@ class HistoryImportPayload(BaseModel):
 @app.post("/api/analyze")
 async def analyze_url(req: AnalyzeRequest):
     try:
-        return await analyzer.analyze(str(req.url))
+        result = await analyzer.analyze(str(req.url))
+        with _analyze_stats_lock:
+            _analyze_stats["total"] += 1
+            if result.get("cacheHit"):
+                _analyze_stats["cache_hits"] += 1
+            _analyze_stats["total_ms"] += int(result.get("durationMs") or 0)
+        log_event(
+            "analyze_done",
+            url=str(req.url),
+            cache_hit=bool(result.get("cacheHit")),
+            duration_ms=result.get("durationMs"),
+            host=result.get("host"),
+        )
+        return result
     except Exception as e:
+        log_event("analyze_failed", url=str(req.url), error=str(e))
         raise HTTPException(status_code=422, detail=str(e))
 
 
@@ -487,6 +503,7 @@ def _build_distill_response(payload: dict, progress_cb=None) -> dict:
 
 def _run_distill_job(payload: dict, queue: Optional["DistillTaskQueue"] = None, loop=None) -> dict:
     task_id = payload.get("_task_id")
+    started = time.perf_counter()
 
     def progress_cb(stage: str, detail=None):
         if queue is None or not task_id or loop is None:
@@ -497,7 +514,17 @@ def _run_distill_job(payload: dict, queue: Optional["DistillTaskQueue"] = None, 
         except Exception:
             pass
 
-    return _build_distill_response(payload, progress_cb=progress_cb)
+    result = _build_distill_response(payload, progress_cb=progress_cb)
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    result["duration_ms"] = duration_ms
+    log_event(
+        "distill_timing",
+        task_id=task_id,
+        app_id=result.get("app_id"),
+        duration_ms=duration_ms,
+        android=result.get("android"),
+    )
+    return result
 
 
 distill_queue = DistillTaskQueue(worker_count=DISTILL_WORKER_COUNT, store=task_store)
@@ -632,15 +659,26 @@ async def distill_task_status(task_id: str):
         return dict(task["result"] or {})
     if task["status"] == "error":
         raise HTTPException(500, task.get("error") or "生成失败")
-    return {
+    detail = task.get("stage_detail") or {}
+    platforms_done = detail.get("done")
+    platforms_total = detail.get("total")
+    payload = {
         "task_id": task["task_id"],
         "app_id": task["app_id"],
         "status": task["status"],
         "stage": task.get("stage") or task["status"],
-        "stage_detail": task.get("stage_detail") or {},
+        "stage_detail": detail,
         "created_at": task["created_at"],
         "updated_at": task["updated_at"],
     }
+    if platforms_total:
+        payload["progress"] = {
+            "done": int(platforms_done or 0),
+            "total": int(platforms_total or 0),
+            "platform": detail.get("platform"),
+            "platform_status": detail.get("platform_status") or {},
+        }
+    return payload
 
 
 class UpdateUrlRequest(BaseModel):
@@ -782,6 +820,11 @@ async def metrics():
             "r2": r2_storage.configured,
         },
         "build_parallelism": config.build_parallelism(),
+        "analyze": {
+            "total": _analyze_stats["total"],
+            "cache_hits": _analyze_stats["cache_hits"],
+            "avg_ms": int(_analyze_stats["total_ms"] / _analyze_stats["total"]) if _analyze_stats["total"] else 0,
+        },
     }
 
 

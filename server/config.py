@@ -104,9 +104,9 @@ def daily_build_quota_per_device() -> int:
 
 def distill_worker_count() -> int:
     try:
-        return max(1, int(os.environ.get("DISTILL_WORKER_COUNT", "1").strip() or "1"))
+        return max(1, min(4, int(os.environ.get("DISTILL_WORKER_COUNT", "2").strip() or "2")))
     except ValueError:
-        return 1
+        return 2
 
 
 def build_parallelism() -> int:
@@ -128,6 +128,20 @@ def html_cache_ttl_seconds() -> int:
         return max(60, int(os.environ.get("HTML_CACHE_TTL_SECONDS", "900").strip() or "900"))
     except ValueError:
         return 900
+
+
+def icon_fetch_timeout() -> float:
+    try:
+        return max(1.0, min(15.0, float(os.environ.get("ICON_FETCH_TIMEOUT", "4").strip() or "4")))
+    except ValueError:
+        return 4.0
+
+
+def icon_candidate_limit() -> int:
+    try:
+        return max(2, min(12, int(os.environ.get("ICON_CANDIDATE_LIMIT", "6").strip() or "6")))
+    except ValueError:
+        return 6
 
 
 def recipe_cache_size() -> int:

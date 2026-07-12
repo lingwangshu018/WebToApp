@@ -28,6 +28,8 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertIn("distill", body)
         self.assertIn("caches", body)
         self.assertIn("features", body)
+        self.assertIn("analyze", body)
+        self.assertIn("history", body)
 
 
 if __name__ == "__main__":

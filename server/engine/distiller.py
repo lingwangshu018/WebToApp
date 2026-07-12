@@ -202,7 +202,13 @@ class Distiller:
             "ios": build_ios,
             "android": build_android,
         }
-        report("building_platforms", {"platforms": list(builders)})
+        platform_status = {name: "pending" for name in builders}
+        report("building_platforms", {
+            "platforms": list(builders),
+            "platform_status": dict(platform_status),
+            "done": 0,
+            "total": len(builders),
+        })
         max_workers = max(1, min(len(builders), int(config.build_parallelism() or 1)))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(fn): name for name, fn in builders.items()}
@@ -214,11 +220,25 @@ class Distiller:
                         ios_meta = meta
                     elif platform_name == "android" and isinstance(meta, dict):
                         android_meta = meta
-                    report("platform_done", {"platform": platform_name, "meta": meta or {}})
+                    platform_status[name] = "done"
+                    report("platform_done", {
+                        "platform": platform_name,
+                        "meta": meta or {},
+                        "platform_status": dict(platform_status),
+                        "done": sum(1 for v in platform_status.values() if v == "done"),
+                        "total": len(builders),
+                    })
                 except Exception as exc:
                     platform_errors[name] = str(exc)
+                    platform_status[name] = "error"
                     log_event("platform_build_failed", platform=name, error=str(exc), app_id=recipe.get("id"))
-                    report("platform_error", {"platform": name, "error": str(exc)})
+                    report("platform_error", {
+                        "platform": name,
+                        "error": str(exc),
+                        "platform_status": dict(platform_status),
+                        "done": sum(1 for v in platform_status.values() if v in {"done", "error"}),
+                        "total": len(builders),
+                    })
 
         report("uploading_cdn")
         cdn_downloads = self._upload_downloads_to_cdn(recipe.get("id") or app_dir.name, dl)
@@ -359,15 +379,22 @@ class Distiller:
             if tile_href:
                 scored.append((400, urljoin(page_url, tile_href)))
 
-        for prio, path in [
-            (300, "/apple-touch-icon.png"),
-            (290, "/apple-touch-icon-precomposed.png"),
-            (280, "/favicon-192x192.png"),
-            (270, "/favicon-96x96.png"),
-            (250, "/favicon.png"),
-            (200, "/favicon.ico"),
-        ]:
-            scored.append((prio, base + path))
+        if not scored:
+            for prio, path in [
+                (300, "/apple-touch-icon.png"),
+                (290, "/apple-touch-icon-precomposed.png"),
+                (280, "/favicon-192x192.png"),
+                (270, "/favicon-96x96.png"),
+                (250, "/favicon.png"),
+                (200, "/favicon.ico"),
+            ]:
+                scored.append((prio, base + path))
+        else:
+            for prio, path in [
+                (250, "/favicon.png"),
+                (200, "/favicon.ico"),
+            ]:
+                scored.append((prio, base + path))
         scored.append((100, f"https://www.google.com/s2/favicons?domain={parsed.netloc}&sz=256"))
         seen = set()
         ordered = []
@@ -405,12 +432,14 @@ class Distiller:
     def _choose_best_icon(self, candidate_urls):
         best_png = None
         best_dim = 0
-        urls = list(candidate_urls[:10])
+        limit = int(config.icon_candidate_limit() or 6)
+        timeout = float(config.icon_fetch_timeout() or 4)
+        urls = list(candidate_urls[:limit])
         if not urls:
             return None
 
         def fetch_one(url):
-            data = self._fetch_url_bytes(url, timeout=6)
+            data = self._fetch_url_bytes(url, timeout=timeout)
             if not data:
                 return None
             png = self._normalize_to_png(data)
@@ -418,7 +447,7 @@ class Distiller:
                 return None
             return png, self._png_dimension(png), url
 
-        workers = max(1, min(4, len(urls)))
+        workers = max(1, min(6, len(urls)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(fetch_one, url) for url in urls]
             for future in as_completed(futures):
