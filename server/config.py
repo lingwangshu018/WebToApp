@@ -109,6 +109,27 @@ def distill_worker_count() -> int:
         return 1
 
 
+def build_parallelism() -> int:
+    try:
+        return max(1, min(5, int(os.environ.get("BUILD_PARALLELISM", "4").strip() or "4")))
+    except ValueError:
+        return 4
+
+
+def icon_cache_ttl_seconds() -> int:
+    try:
+        return max(60, int(os.environ.get("ICON_CACHE_TTL_SECONDS", "3600").strip() or "3600"))
+    except ValueError:
+        return 3600
+
+
+def html_cache_ttl_seconds() -> int:
+    try:
+        return max(60, int(os.environ.get("HTML_CACHE_TTL_SECONDS", "900").strip() or "900"))
+    except ValueError:
+        return 900
+
+
 def recipe_cache_size() -> int:
     try:
         return max(1, int(os.environ.get("RECIPE_CACHE_SIZE", "512").strip() or "512"))

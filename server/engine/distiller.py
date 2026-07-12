@@ -13,15 +13,18 @@ import struct
 import base64
 import io
 import zlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse, urljoin
 from PIL import Image, ImageOps, UnidentifiedImageError
 from server import config
 from server.engine.apk_builder import ApkBuilder
 from server.engine import mobileconfig_signer
+from server.engine.cache import html_cache, icon_cache
 from server.engine.storage import r2_storage
 from server.htmlmeta import parse_html_metadata
+from server.logging_util import log_event
 from server.net import fetch_public_url_bytes
 
 
@@ -137,15 +140,20 @@ class Distiller:
                 return bool(raw.get(key))
         return default
 
-    def write_app_files(self, app_dir: Path, recipe: dict, base_url: Optional[str] = None) -> dict:
-        """Build every platform package.
+    def write_app_files(
+        self,
+        app_dir: Path,
+        recipe: dict,
+        base_url: Optional[str] = None,
+        progress_cb: Optional[Callable[[str, Optional[dict]], None]] = None,
+    ) -> dict:
+        def report(stage: str, extra: Optional[dict] = None):
+            if progress_cb:
+                try:
+                    progress_cb(stage, extra)
+                except Exception:
+                    pass
 
-        `base_url` is the public origin of this server (e.g. https://example.com),
-        used for the iOS Web Clip's dynamic launcher URL. If None, the Web Clip
-        falls back to the hard-coded target URL (no runtime URL switching).
-
-        Returns a dict with build metadata (e.g. ios_signed, ios_dynamic_url).
-        """
         app_dir.mkdir(parents=True, exist_ok=True)
         dl = app_dir / "downloads"
         dl.mkdir(exist_ok=True)
@@ -153,34 +161,83 @@ class Distiller:
         stored_recipe = dict(recipe)
         stored_recipe.pop("_custom_icon_data_url", None)
 
-        # Fetch icon — all platform builds depend on this
+        report("fetching_icon")
         icon_png = self._fetch_icon(recipe)
         if icon_png:
             (app_dir / "icon.png").write_bytes(icon_png)
 
+        report("writing_shell")
         self._write_download_page(app_dir, recipe)
         direct_url = recipe["url"]
         self._write_pwa_files(app_dir, recipe, direct_url)
-        self._build_windows(dl, recipe, icon_png, direct_url)
-        self._build_macos(dl, recipe, icon_png, direct_url)
-        self._build_linux(dl, recipe, icon_png, direct_url)
-        self._build_android(dl, recipe, icon_png, direct_url)
-        ios_meta = self._build_ios(dl, recipe, icon_png, base_url)
 
-        # Offload heavy artifacts to object storage if configured. Done after
-        # every build finishes so partial uploads don't poison the cache.
+        ios_meta = {"signed": False, "dynamic_url": False}
+        android_meta = {"apk": False, "fallback": False}
+        platform_errors = {}
+
+        def build_windows():
+            self._build_windows(dl, recipe, icon_png, direct_url)
+            return "windows", None
+
+        def build_macos():
+            self._build_macos(dl, recipe, icon_png, direct_url)
+            return "macos", None
+
+        def build_linux():
+            self._build_linux(dl, recipe, icon_png, direct_url)
+            return "linux", None
+
+        def build_ios():
+            meta = self._build_ios(dl, recipe, icon_png, base_url)
+            return "ios", meta
+
+        def build_android():
+            meta = self._build_android(dl, recipe, icon_png, direct_url)
+            return "android", meta
+
+        builders = {
+            "windows": build_windows,
+            "macos": build_macos,
+            "linux": build_linux,
+            "ios": build_ios,
+            "android": build_android,
+        }
+        report("building_platforms", {"platforms": list(builders)})
+        max_workers = max(1, min(len(builders), int(config.build_parallelism() or 1)))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(fn): name for name, fn in builders.items()}
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    platform_name, meta = future.result()
+                    if platform_name == "ios" and isinstance(meta, dict):
+                        ios_meta = meta
+                    elif platform_name == "android" and isinstance(meta, dict):
+                        android_meta = meta
+                    report("platform_done", {"platform": platform_name, "meta": meta or {}})
+                except Exception as exc:
+                    platform_errors[name] = str(exc)
+                    log_event("platform_build_failed", platform=name, error=str(exc), app_id=recipe.get("id"))
+                    report("platform_error", {"platform": name, "error": str(exc)})
+
+        report("uploading_cdn")
         cdn_downloads = self._upload_downloads_to_cdn(recipe.get("id") or app_dir.name, dl)
         if cdn_downloads:
             stored_recipe["downloads_cdn"] = cdn_downloads
             recipe["downloads_cdn"] = cdn_downloads
 
-        # Persist recipe last so it always reflects the final CDN state.
+        stored_recipe["android"] = android_meta
+        if platform_errors:
+            stored_recipe["platform_errors"] = platform_errors
         (app_dir / "recipe.json").write_text(json.dumps(stored_recipe, ensure_ascii=False, indent=2))
+        report("done", {"android": android_meta, "ios": ios_meta})
 
         return {
             "ios": ios_meta,
+            "android": android_meta,
             "runtime_url": direct_url,
             "downloads_cdn": cdn_downloads,
+            "platform_errors": platform_errors,
         }
 
     def _upload_downloads_to_cdn(self, app_id: str, downloads_dir: Path) -> dict:
@@ -201,22 +258,19 @@ class Distiller:
     )
 
     def _fetch_icon(self, recipe):
-        """Fetch the best-resolution icon for the site.
-        Strategy:
-          0. If the user uploaded a custom icon, normalize and use it.
-          1. Parse the page HTML for declared icons (apple-touch-icon, icon, manifest, msapplication).
-          2. Try common well-known paths (/apple-touch-icon.png, /favicon.ico, ...).
-          3. Fall back to Google's favicon service.
-          4. Generate a themed placeholder PNG as last resort.
-        Returns valid PNG bytes (always non-None) for downstream platform builders.
-        """
         custom_icon = self._custom_icon_png(recipe.get("_custom_icon_data_url"))
         if custom_icon:
             return custom_icon
         url = recipe["url"]
+        host = urlparse(url).netloc.lower()
+        cache_key = f"icon:{host}"
+        cached = icon_cache.get(cache_key)
+        if cached:
+            return cached
         candidates = self._collect_icon_candidates(url)
         best = self._choose_best_icon(candidates)
         if best:
+            icon_cache.set(cache_key, best)
             return best
         return self._make_placeholder_png(recipe.get("color", "#7c3aed"))
 
@@ -247,15 +301,24 @@ class Distiller:
         except (UnidentifiedImageError, OSError, ValueError):
             return None
 
-    def _fetch_url_bytes(self, url, timeout=8):
+    def _fetch_url_bytes(self, url, timeout=8, use_cache=False):
+        cache_key = None
+        if use_cache:
+            cache_key = f"bytes:{url}"
+            cached = html_cache.get(cache_key)
+            if cached is not None:
+                return cached
         try:
-            return fetch_public_url_bytes(
+            data = fetch_public_url_bytes(
                 url,
                 timeout=timeout,
                 headers={"User-Agent": self.USER_AGENT},
                 max_bytes=config.outbound_response_max_bytes(),
                 max_redirects=config.outbound_redirect_limit(),
             )
+            if use_cache and cache_key and data is not None:
+                html_cache.set(cache_key, data)
+            return data
         except Exception:
             pass
         return None
@@ -264,7 +327,7 @@ class Distiller:
         scored = []
         parsed = urlparse(page_url)
         base = f"{parsed.scheme}://{parsed.netloc}"
-        html_bytes = self._fetch_url_bytes(page_url, timeout=10)
+        html_bytes = self._fetch_url_bytes(page_url, timeout=10, use_cache=True)
         html = html_bytes.decode("utf-8", errors="ignore") if html_bytes else ""
 
         if html:
@@ -1401,13 +1464,12 @@ echo "✓ {n} 已安装到应用菜单"
             feature_options=r.get("options") or {},
             app_id=r['id'],
         ):
-            # Real APK built; remove any stale fallback zip from previous attempts
             if zip_path.exists():
                 zip_path.unlink()
-            return
+            return {"apk": True, "fallback": False}
 
-        # Fallback: generate PWA offline package
         builder.build_fallback(str(zip_path), shell_url, r['name'], icon_png, r['color'])
+        return {"apk": False, "fallback": True}
 
     def _normalized_display_mode(self, display):
         raw = str(display or "").strip().lower()

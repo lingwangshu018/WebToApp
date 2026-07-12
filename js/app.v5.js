@@ -582,29 +582,45 @@
     const task = await submitRes.json();
     if (!task.task_id) throw new Error(t('err.taskSubmitFailed'));
 
+    const stageLabel = (stage) => {
+      const key = `generate.stage.${stage || 'running'}`;
+      const translated = t(key);
+      return translated === key ? t('generate.stage.running') : translated;
+    };
+    if (generateBtn) {
+      generateBtn.dataset.originalText = generateBtn.textContent;
+      generateBtn.textContent = stageLabel('queued');
+    }
     let data = null;
-    let attempts = 0;
-    while (attempts < 240) {
-      attempts += 1;
-      await sleep(attempts <= 8 ? 500 : 1000);
-      const pollRes = await fetch(`/api/distill/${encodeURIComponent(task.task_id)}`, {
-        headers: apiHeaders(),
-      });
-      if (pollRes.status === 404) throw new Error(t('err.taskMissing'));
-      if (!pollRes.ok) {
-        let message = t('err.generateFailed');
-        try {
-          const err = await pollRes.json();
-          if (err && err.detail) message = String(err.detail);
-        } catch (_err) {}
-        throw new Error(message);
+    try {
+      let attempts = 0;
+      while (attempts < 240) {
+        attempts += 1;
+        await sleep(attempts <= 8 ? 500 : 1000);
+        const pollRes = await fetch(`/api/distill/${encodeURIComponent(task.task_id)}`, {
+          headers: apiHeaders(),
+        });
+        if (pollRes.status === 404) throw new Error(t('err.taskMissing'));
+        if (!pollRes.ok) {
+          let message = t('err.generateFailed');
+          try {
+            const err = await pollRes.json();
+            if (err && err.detail) message = String(err.detail);
+          } catch (_err) {}
+          throw new Error(message);
+        }
+        const payload = await pollRes.json();
+        if (payload && payload.status && payload.task_id) {
+          if (generateBtn) generateBtn.textContent = stageLabel(payload.stage || payload.status);
+          continue;
+        }
+        data = payload;
+        break;
       }
-      const payload = await pollRes.json();
-      if (payload && payload.status && payload.task_id) {
-        continue;
+    } finally {
+      if (generateBtn && generateBtn.dataset.originalText) {
+        generateBtn.textContent = generateBtn.dataset.originalText;
       }
-      data = payload;
-      break;
     }
     if (!data) throw new Error(t('err.generateTimeout'));
 

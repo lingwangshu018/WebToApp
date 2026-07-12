@@ -32,8 +32,10 @@ from server.engine.analyzer import SiteAnalyzer
 from server.engine.distiller import Distiller
 from server.engine.recipe import RecipeStore
 from server.engine import mobileconfig_signer
+from server.engine.cache import html_cache, icon_cache
 from server.engine.storage import r2_storage
 from server.history_store import HistoryStore
+from server.logging_util import log_event, setup_logging
 
 app = FastAPI(title="WebToApp Distillation Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -98,6 +100,7 @@ ROOT = Path(__file__).parent.parent
 APPS_DIR = ROOT / "generated"
 APPS_DIR.mkdir(exist_ok=True)
 history_store = HistoryStore(APPS_DIR / "_history.json")
+setup_logging()
 _recipe_cache = OrderedDict()
 _recipe_cache_lock = threading.RLock()
 
@@ -189,6 +192,8 @@ class DistillTaskQueue:
         self._tasks: Dict[str, dict] = {}
         self._lock = asyncio.Lock()
         self._workers = []
+        self.completed_total = 0
+        self.failed_total = 0
 
     async def start(self) -> None:
         if self._workers:
@@ -214,6 +219,8 @@ class DistillTaskQueue:
             "task_id": task_id,
             "app_id": app_id,
             "status": "pending",
+            "stage": "queued",
+            "stage_detail": {},
             "created_at": now,
             "updated_at": now,
             "payload": deepcopy(payload),
@@ -233,6 +240,16 @@ class DistillTaskQueue:
             task = self._tasks.get(task_id)
             return deepcopy(task) if task else None
 
+    async def set_progress(self, task_id: str, stage: str, detail: Optional[dict] = None) -> None:
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.get("status") not in {"pending", "running"}:
+                return
+            task["status"] = "running"
+            task["stage"] = stage
+            task["stage_detail"] = detail or {}
+            task["updated_at"] = _utc_now_iso()
+
     async def _worker_loop(self, _index: int) -> None:
         while True:
             task_id = await self._queue.get()
@@ -245,26 +262,36 @@ class DistillTaskQueue:
                     if not task:
                         continue
                     task["status"] = "running"
+                    task["stage"] = "starting"
                     task["updated_at"] = _utc_now_iso()
                     payload = deepcopy(task["payload"])
+                payload = dict(payload or {})
+                payload["_task_id"] = task_id
+                loop = asyncio.get_running_loop()
                 try:
-                    result = await asyncio.to_thread(_run_distill_job, payload)
+                    result = await asyncio.to_thread(_run_distill_job, payload, self, loop)
                 except Exception as exc:
+                    log_event("distill_failed", task_id=task_id, error=str(exc))
                     async with self._lock:
                         task = self._tasks.get(task_id)
                         if task:
                             task["status"] = "error"
+                            task["stage"] = "error"
                             task["error"] = str(exc)
                             task["updated_at"] = _utc_now_iso()
                             task["finished_at"] = time.time()
+                            self.failed_total += 1
                 else:
                     async with self._lock:
                         task = self._tasks.get(task_id)
                         if task:
                             task["status"] = "done"
+                            task["stage"] = "done"
                             task["result"] = result
                             task["updated_at"] = _utc_now_iso()
                             task["finished_at"] = time.time()
+                            self.completed_total += 1
+                    log_event("distill_done", task_id=task_id, app_id=(result or {}).get("app_id"))
             finally:
                 self._queue.task_done()
 
@@ -373,7 +400,7 @@ def _import_recipe_from_payload(item: dict) -> dict:
     return normalized
 
 
-def _build_distill_response(payload: dict) -> dict:
+def _build_distill_response(payload: dict, progress_cb=None) -> dict:
     app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
     recipe = distiller.create_recipe(
         app_id=app_id,
@@ -386,7 +413,12 @@ def _build_distill_response(payload: dict) -> dict:
     )
     app_dir = APPS_DIR / app_id
     base_url = payload.get("base_url") or ""
-    build_meta = distiller.write_app_files(app_dir, recipe, base_url=base_url)
+    build_meta = distiller.write_app_files(
+        app_dir,
+        recipe,
+        base_url=base_url,
+        progress_cb=progress_cb,
+    )
     history_store.record_build(
         payload.get("device_fingerprint"),
         recipe,
@@ -399,13 +431,26 @@ def _build_distill_response(payload: dict) -> dict:
         "recipe": _public_recipe(recipe),
         "edit_token": recipe.get("edit_token"),
         "ios": build_meta.get("ios", {}),
+        "android": build_meta.get("android", {}),
         "runtime_url": build_meta.get("runtime_url"),
+        "platform_errors": build_meta.get("platform_errors") or {},
         "signing_available": mobileconfig_signer.can_sign(),
     }
 
 
-def _run_distill_job(payload: dict) -> dict:
-    return _build_distill_response(payload)
+def _run_distill_job(payload: dict, queue: Optional["DistillTaskQueue"] = None, loop=None) -> dict:
+    task_id = payload.get("_task_id")
+
+    def progress_cb(stage: str, detail=None):
+        if queue is None or not task_id or loop is None:
+            return
+        try:
+            fut = asyncio.run_coroutine_threadsafe(queue.set_progress(task_id, stage, detail), loop)
+            fut.result(timeout=2)
+        except Exception:
+            pass
+
+    return _build_distill_response(payload, progress_cb=progress_cb)
 
 
 distill_queue = DistillTaskQueue(worker_count=DISTILL_WORKER_COUNT)
@@ -471,8 +516,8 @@ def _purge_expired_generated_apps() -> int:
             try:
                 r2_storage.delete_app(app_id)
             except Exception as exc:  # noqa: BLE001
-                print(f"[Retention] R2 cleanup failed for {app_id}: {exc}")
-    print(f"[Retention] Purged {len(removed_ids)} expired apps: {', '.join(removed_ids[:10])}")
+                log_event("retention_r2_failed", app_id=app_id, error=str(exc))
+    log_event("retention_purged", count=len(removed_ids), app_ids=removed_ids[:10])
     return len(removed_ids)
 
 
@@ -484,7 +529,7 @@ async def _retention_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"[Retention] Sweep failed: {exc}")
+            log_event("retention_sweep_failed", error=str(exc))
 
 
 @app.on_event("startup")
@@ -521,6 +566,13 @@ async def distill_app(req: DistillRequest, request: Request):
             "device_fingerprint": device_fingerprint,
         }
     )
+    log_event(
+        "distill_submitted",
+        task_id=task.get("task_id"),
+        app_id=task.get("app_id"),
+        url=str(req.url),
+        client_ip=_client_ip(request),
+    )
     return JSONResponse(task, status_code=202)
 
 
@@ -537,6 +589,8 @@ async def distill_task_status(task_id: str):
         "task_id": task["task_id"],
         "app_id": task["app_id"],
         "status": task["status"],
+        "stage": task.get("stage") or task["status"],
+        "stage_detail": task.get("stage_detail") or {},
         "created_at": task["created_at"],
         "updated_at": task["updated_at"],
     }
@@ -617,6 +671,68 @@ async def _purge_launch_cache(app_id: str) -> Optional[bool]:
         print(f"[CF Purge] {app_id}: HTTP {resp.status_code} {resp.text[:200]}")
         return False
     return True
+
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True, "status": "healthy"}
+
+
+@app.get("/readyz")
+async def readyz():
+    apps_writable = False
+    try:
+        APPS_DIR.mkdir(exist_ok=True)
+        probe = APPS_DIR / ".healthcheck"
+        probe.write_text("ok", encoding="utf-8")
+        apps_writable = True
+        try:
+            probe.unlink()
+        except Exception:
+            pass
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "status": "not_ready", "error": str(exc)},
+            status_code=503,
+        )
+    return {
+        "ok": True,
+        "status": "ready",
+        "apps_writable": apps_writable,
+        "workers": DISTILL_WORKER_COUNT,
+        "build_parallelism": config.build_parallelism(),
+    }
+
+
+@app.get("/api/metrics")
+async def metrics():
+    apk_builder_ready = False
+    try:
+        from server.engine.apk_builder import ApkBuilder
+        apk_builder_ready = bool(ApkBuilder().can_build_apk)
+    except Exception:
+        apk_builder_ready = False
+    return {
+        "distill": {
+            "workers": DISTILL_WORKER_COUNT,
+            "completed_total": distill_queue.completed_total,
+            "failed_total": distill_queue.failed_total,
+            "queue_size": distill_queue._queue.qsize(),
+            "in_memory_tasks": len(distill_queue._tasks),
+        },
+        "caches": {
+            "html": html_cache.stats(),
+            "icon": icon_cache.stats(),
+            "recipe": {"size": len(_recipe_cache), "max_size": RECIPE_CACHE_SIZE},
+        },
+        "features": {
+            "ios_signing": mobileconfig_signer.can_sign(),
+            "android_apk": apk_builder_ready,
+            "r2": r2_storage.configured,
+        },
+        "build_parallelism": config.build_parallelism(),
+    }
 
 
 @app.get("/api/recipes/popular")
