@@ -171,10 +171,15 @@ class HistoryStore:
             )
             try:
                 backup = legacy.with_suffix(".json.bak")
-                if not backup.exists():
+                if backup.exists():
+                    legacy.unlink(missing_ok=True)
+                else:
                     legacy.replace(backup)
             except Exception:
-                pass
+                try:
+                    legacy.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _visit_entry(self) -> dict:
         return {
