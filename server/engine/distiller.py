@@ -575,13 +575,24 @@ class Distiller:
             if ios_signed else
             '<span class="ios-badge ios-badge-warn" data-i18n="iosBadgeUnsigned">Unsigned, but still installable</span>'
         )
-        # (platform name, icon key, href, detail-i18n-key, action-i18n-key)
+        android_apk = (app_dir / "downloads" / "android.apk").exists()
+        android_zip = (app_dir / "downloads" / "android.zip").exists()
+        android_meta = r.get("android") if isinstance(r.get("android"), dict) else {}
+        if android_meta.get("apk") is True or (android_apk and not android_zip):
+            android_detail_key = "platAndroidApkDetail"
+            android_badge = '<span class="android-badge android-badge-ok" data-i18n="androidBadgeApk">Signed APK</span>'
+        elif android_zip or android_meta.get("fallback") is True:
+            android_detail_key = "platAndroidZipDetail"
+            android_badge = '<span class="android-badge android-badge-warn" data-i18n="androidBadgeZip">PWA package</span>'
+        else:
+            android_detail_key = "platAndroidDetail"
+            android_badge = ""
         platform_rows = [
-            ("iPhone / iPad", "apple", f"{base}/download/ios", "platIosDetail", "actionInstall"),
-            ("Android", "android", f"{base}/download/android", "platAndroidDetail", "actionDownload"),
-            ("macOS", "apple", f"{base}/download/macos", "platMacDetail", "actionDownload"),
-            ("Windows", "windows", f"{base}/download/windows", "platWinDetail", "actionDownload"),
-            ("Linux", "linux", f"{base}/download/linux", "platLinuxDetail", "actionDownload"),
+            ("iPhone / iPad", "apple", f"{base}/download/ios", "platIosDetail", "actionInstall", ""),
+            ("Android", "android", f"{base}/download/android", android_detail_key, "actionDownload", android_badge),
+            ("macOS", "apple", f"{base}/download/macos", "platMacDetail", "actionDownload", ""),
+            ("Windows", "windows", f"{base}/download/windows", "platWinDetail", "actionDownload", ""),
+            ("Linux", "linux", f"{base}/download/linux", "platLinuxDetail", "actionDownload", ""),
         ]
         platform_icons = {
             "windows": (
@@ -609,12 +620,12 @@ class Distiller:
             (
                 f'<a href="{href}" class="plat">'
                 f'<span class="plat-icon plat-icon-{icon_key}">{platform_icons[icon_key]}</span>'
-                f'<div class="plat-info"><div class="plat-name">{name}</div>'
+                f'<div class="plat-info"><div class="plat-name">{name}{extra_badge}</div>'
                 f'<div class="plat-detail" data-i18n="{detail_key}"></div></div>'
                 f'<span class="plat-badge plat-dl" data-i18n="{action_key}"></span>'
                 f'</a>'
             )
-            for name, icon_key, href, detail_key, action_key in platform_rows
+            for name, icon_key, href, detail_key, action_key, extra_badge in platform_rows
         )
         # ---- i18n: in-page translations (visitor can switch; default English) ----
         dl_i18n = self._download_page_translations()
@@ -690,6 +701,10 @@ a{{color:inherit;text-decoration:none}}
   .ios-badge{{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;font-size:.78rem;font-weight:700;white-space:nowrap}}
   .ios-badge-ok{{background:#d9f4e4;color:#17603d}}
   .ios-badge-warn{{background:#f8ebc7;color:#8b6114}}
+  .android-badge{{display:inline-flex;align-items:center;height:24px;margin-left:8px;padding:0 8px;border-radius:999px;font-size:.72rem;font-weight:700;vertical-align:middle;white-space:nowrap}}
+  .android-badge-ok{{background:#d9f4e4;color:#17603d}}
+  .android-badge-warn{{background:#f8ebc7;color:#8b6114}}
+  .plat-name{{display:flex;align-items:center;flex-wrap:wrap;gap:4px}}
   .ios-copy{{font-size:.9rem;line-height:1.7;color:rgba(24,20,18,.62)}}
   .ios-steps{{margin-top:12px;padding-left:18px;color:rgba(24,20,18,.56);font-size:.84rem;line-height:1.7}}
   .section-label{{margin-bottom:14px;font-size:.82rem;letter-spacing:.14em;color:rgba(24,20,18,.42);text-transform:uppercase}}
@@ -850,6 +865,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Download",
                 "platIosDetail": ".mobileconfig \u00b7 download & install via Safari",
                 "platAndroidDetail": ".apk / .zip \u00b7 install directly or unzip",
+                "platAndroidApkDetail": ".apk \u00b7 signed WebView installer",
+                "platAndroidZipDetail": ".zip \u00b7 lightweight PWA package",
+                "androidBadgeApk": "Signed APK",
+                "androidBadgeZip": "PWA package",
                 "platMacDetail": ".zip \u00b7 native .app icon \u00b7 drag to Applications",
                 "platWinDetail": ".zip \u00b7 native icon \u00b7 unzip and run",
                 "platLinuxDetail": ".tar.gz \u00b7 desktop icon included \u00b7 unzip and run",
@@ -879,6 +898,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "下载",
                 "platIosDetail": ".mobileconfig · Safari 下载并安装描述文件",
                 "platAndroidDetail": ".apk / .zip · 直接安装或解压使用",
+                "platAndroidApkDetail": ".apk · 已签名 WebView 安装包",
+                "platAndroidZipDetail": ".zip · 轻量 PWA 包",
+                "androidBadgeApk": "已签名 APK",
+                "androidBadgeZip": "PWA 包",
                 "platMacDetail": ".zip · 原生 .app 图标 · 拖入应用文件夹",
                 "platWinDetail": ".zip · 原生图标 · 解压即用",
                 "platLinuxDetail": ".tar.gz · 桌面图标已内置 · 解压运行",
@@ -908,6 +931,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "ダウンロード",
                 "platIosDetail": ".mobileconfig · Safari でダウンロードしてインストール",
                 "platAndroidDetail": ".apk / .zip · そのままインストールまたは解凍",
+                "platAndroidApkDetail": ".apk · 署名済み WebView インストーラー",
+                "platAndroidZipDetail": ".zip · 軽量 PWA パッケージ",
+                "androidBadgeApk": "署名済み APK",
+                "androidBadgeZip": "PWA パッケージ",
                 "platMacDetail": ".zip · ネイティブ .app アイコン · アプリケーションにドラッグ",
                 "platWinDetail": ".zip · ネイティブアイコン · 解凍して実行",
                 "platLinuxDetail": ".tar.gz · デスクトップアイコン内蔵 · 解凍して実行",
@@ -937,6 +964,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "تنزيل",
                 "platIosDetail": ".mobileconfig · التنزيل والتثبيت عبر Safari",
                 "platAndroidDetail": ".apk / .zip · التثبيت مباشرةً أو فك الضغط",
+                "platAndroidApkDetail": ".apk · مثبت WebView موقّع",
+                "platAndroidZipDetail": ".zip · حزمة PWA خفيفة",
+                "androidBadgeApk": "APK موقّع",
+                "androidBadgeZip": "حزمة PWA",
                 "platMacDetail": ".zip · أيقونة .app أصلية · اسحبها إلى التطبيقات",
                 "platWinDetail": ".zip · أيقونة أصلية · فك الضغط والتشغيل",
                 "platLinuxDetail": ".tar.gz · أيقونة سطح المكتب مدمجة · فك الضغط والتشغيل",
@@ -966,6 +997,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Скачать",
                 "platIosDetail": ".mobileconfig · загрузка и установка через Safari",
                 "platAndroidDetail": ".apk / .zip · установка напрямую или распаковка",
+                "platAndroidApkDetail": ".apk · подписанный WebView-установщик",
+                "platAndroidZipDetail": ".zip · лёгкий PWA-пакет",
+                "androidBadgeApk": "Подписанный APK",
+                "androidBadgeZip": "PWA-пакет",
                 "platMacDetail": ".zip · родной значок .app · перетащите в Программы",
                 "platWinDetail": ".zip · родной значок · распакуйте и запустите",
                 "platLinuxDetail": ".tar.gz · значок рабочего стола включён · распакуйте и запустите",
@@ -995,6 +1030,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Descargar",
                 "platIosDetail": ".mobileconfig · descarga e instala con Safari",
                 "platAndroidDetail": ".apk / .zip · instala directamente o descomprime",
+                "platAndroidApkDetail": ".apk · instalador WebView firmado",
+                "platAndroidZipDetail": ".zip · paquete PWA ligero",
+                "androidBadgeApk": "APK firmado",
+                "androidBadgeZip": "Paquete PWA",
                 "platMacDetail": ".zip · icono nativo .app · arrastra a Aplicaciones",
                 "platWinDetail": ".zip · icono nativo · descomprime y ejecuta",
                 "platLinuxDetail": ".tar.gz · icono de escritorio incluido · descomprime y ejecuta",
@@ -1024,6 +1063,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Baixar",
                 "platIosDetail": ".mobileconfig · baixe e instale via Safari",
                 "platAndroidDetail": ".apk / .zip · instale direto ou descompacte",
+                "platAndroidApkDetail": ".apk · instalador WebView assinado",
+                "platAndroidZipDetail": ".zip · pacote PWA leve",
+                "androidBadgeApk": "APK assinado",
+                "androidBadgeZip": "Pacote PWA",
                 "platMacDetail": ".zip · ícone nativo .app · arraste para Aplicativos",
                 "platWinDetail": ".zip · ícone nativo · descompacte e execute",
                 "platLinuxDetail": ".tar.gz · ícone de desktop incluído · descompacte e execute",
@@ -1053,6 +1096,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Télécharger",
                 "platIosDetail": ".mobileconfig · téléchargez et installez via Safari",
                 "platAndroidDetail": ".apk / .zip · installez directement ou décompressez",
+                "platAndroidApkDetail": ".apk · installateur WebView signé",
+                "platAndroidZipDetail": ".zip · paquet PWA léger",
+                "androidBadgeApk": "APK signé",
+                "androidBadgeZip": "Paquet PWA",
                 "platMacDetail": ".zip · icône native .app · glissez vers Applications",
                 "platWinDetail": ".zip · icône native · décompressez et exécutez",
                 "platLinuxDetail": ".tar.gz · icône de bureau incluse · décompressez et exécutez",
@@ -1082,6 +1129,10 @@ a{{color:inherit;text-decoration:none}}
                 "actionDownload": "Herunterladen",
                 "platIosDetail": ".mobileconfig · über Safari herunterladen & installieren",
                 "platAndroidDetail": ".apk / .zip · direkt installieren oder entpacken",
+                "platAndroidApkDetail": ".apk · signierter WebView-Installer",
+                "platAndroidZipDetail": ".zip · leichtes PWA-Paket",
+                "androidBadgeApk": "Signiertes APK",
+                "androidBadgeZip": "PWA-Paket",
                 "platMacDetail": ".zip · natives .app-Icon · in Programme ziehen",
                 "platWinDetail": ".zip · natives Icon · entpacken und ausführen",
                 "platLinuxDetail": ".tar.gz · Desktop-Icon enthalten · entpacken und ausführen",

@@ -105,6 +105,8 @@ task_store = TaskStore(APPS_DIR / "_tasks.sqlite3")
 setup_logging()
 _analyze_stats = {"total": 0, "cache_hits": 0, "total_ms": 0}
 _analyze_stats_lock = threading.Lock()
+_android_build_stats = {"apk_total": 0, "fallback_total": 0, "total_ms": 0, "count": 0}
+_android_build_stats_lock = threading.Lock()
 _recipe_cache = OrderedDict()
 _recipe_cache_lock = threading.RLock()
 
@@ -517,12 +519,20 @@ def _run_distill_job(payload: dict, queue: Optional["DistillTaskQueue"] = None, 
     result = _build_distill_response(payload, progress_cb=progress_cb)
     duration_ms = int((time.perf_counter() - started) * 1000)
     result["duration_ms"] = duration_ms
+    android_meta = result.get("android") or {}
+    with _android_build_stats_lock:
+        _android_build_stats["count"] += 1
+        _android_build_stats["total_ms"] += duration_ms
+        if android_meta.get("apk"):
+            _android_build_stats["apk_total"] += 1
+        elif android_meta.get("fallback"):
+            _android_build_stats["fallback_total"] += 1
     log_event(
         "distill_timing",
         task_id=task_id,
         app_id=result.get("app_id"),
         duration_ms=duration_ms,
-        android=result.get("android"),
+        android=android_meta,
     )
     return result
 
@@ -565,6 +575,69 @@ def _request_is_from_trusted_proxy(request: Request) -> bool:
     return any(parsed in network for network in TRUSTED_PROXY_NETWORKS)
 
 
+
+def _keystore_dir() -> Path:
+    return Path(config.android_keystore_dir())
+
+
+def _keystore_stats() -> dict:
+    root = _keystore_dir()
+    if not root.exists():
+        return {"dir": str(root), "count": 0, "bytes": 0}
+    count = 0
+    total = 0
+    for path in root.glob("*.keystore"):
+        count += 1
+        try:
+            total += path.stat().st_size
+        except OSError:
+            pass
+    return {"dir": str(root), "count": count, "bytes": total}
+
+
+def _purge_keystores_for_apps(app_ids) -> int:
+    root = _keystore_dir()
+    if not root.exists():
+        return 0
+    removed = 0
+    for app_id in app_ids:
+        safe_id = re.sub(r"[^a-z0-9_]", "", str(app_id or "").lower()) or "app"
+        for path in (root / f"{safe_id}.keystore", root / f"{safe_id}.json"):
+            try:
+                if path.exists():
+                    path.unlink()
+                    removed += 1
+            except OSError:
+                continue
+    return removed
+
+
+def _purge_orphan_keystores() -> int:
+    root = _keystore_dir()
+    if not root.exists():
+        return 0
+    live_ids = set()
+    for recipe_path in APPS_DIR.glob("*/recipe.json"):
+        live_ids.add(recipe_path.parent.name)
+    removed = 0
+    for keystore in root.glob("*.keystore"):
+        app_id = keystore.stem
+        if app_id in live_ids:
+            continue
+        meta = root / f"{app_id}.json"
+        try:
+            keystore.unlink()
+            removed += 1
+        except OSError:
+            pass
+        try:
+            if meta.exists():
+                meta.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
 def _purge_expired_generated_apps() -> int:
     expired = history_store.list_expired_apps(_retention_cutoff_iso())
     if not expired:
@@ -585,13 +658,21 @@ def _purge_expired_generated_apps() -> int:
     with _recipe_cache_lock:
         for app_id in removed_ids:
             _recipe_cache.pop(app_id, None)
+    keystore_removed = _purge_keystores_for_apps(removed_ids)
+    orphan_removed = _purge_orphan_keystores()
     if r2_storage.configured:
         for app_id in removed_ids:
             try:
                 r2_storage.delete_app(app_id)
             except Exception as exc:  # noqa: BLE001
                 log_event("retention_r2_failed", app_id=app_id, error=str(exc))
-    log_event("retention_purged", count=len(removed_ids), app_ids=removed_ids[:10])
+    log_event(
+        "retention_purged",
+        count=len(removed_ids),
+        app_ids=removed_ids[:10],
+        keystores_removed=keystore_removed,
+        orphan_keystores_removed=orphan_removed,
+    )
     return len(removed_ids)
 
 
@@ -825,6 +906,13 @@ async def metrics():
             "cache_hits": _analyze_stats["cache_hits"],
             "avg_ms": int(_analyze_stats["total_ms"] / _analyze_stats["total"]) if _analyze_stats["total"] else 0,
         },
+        "android_builds": {
+            "apk_total": _android_build_stats["apk_total"],
+            "fallback_total": _android_build_stats["fallback_total"],
+            "avg_ms": int(_android_build_stats["total_ms"] / _android_build_stats["count"]) if _android_build_stats["count"] else 0,
+            "count": _android_build_stats["count"],
+        },
+        "keystores": _keystore_stats(),
     }
 
 

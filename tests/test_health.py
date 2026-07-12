@@ -30,6 +30,8 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertIn("features", body)
         self.assertIn("analyze", body)
         self.assertIn("history", body)
+        self.assertIn("android_builds", body)
+        self.assertIn("keystores", body)
 
 
 if __name__ == "__main__":
