@@ -177,7 +177,40 @@ sudo certbot --nginx -d your-domain.com
 - `apktool`
 - 提供 `java`、`javac`、`keytool` 的 JDK
 
-如果未被自动检测到，用 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 指向 SDK。每个生成的应用都有**自己独立的**签名证书（存放在 `ANDROID_KEYSTORE_DIR`），因此更新可原地安装。
+### 一键安装（Linux）
+
+```bash
+# 需要 root 或可写 /opt 与 /usr/local/bin
+sudo bash server/scripts/install_android_sdk.sh
+```
+
+脚本默认安装到 `/opt/android-sdk`（platform 34 + build-tools 34.0.0），并把 `apktool` 放到
+`server/engine/_android_tools/apktool.jar` + `/usr/local/bin/apktool`。
+
+然后在环境文件中设置（systemd 的 `EnvironmentFile` 亦可）：
+
+```bash
+ANDROID_HOME=/opt/android-sdk
+ANDROID_SDK_ROOT=/opt/android-sdk
+PATH=/opt/android-sdk/build-tools/34.0.0:/opt/android-sdk/platform-tools:/usr/local/bin:$PATH
+```
+
+重启服务后访问 `/api/metrics`，应看到 `"android_apk": true`。
+
+### 把历史 zip 降级包重打包成真 APK
+
+若服务器曾经缺少 SDK，部分应用只有 `android.zip`。工具链就绪后可批量重建：
+
+```bash
+# 仅重建缺少 android.apk 的应用，并上传到 R2（若已配置）
+python -m server.scripts.rebuild_android_apks
+
+# 只重建前 20 个 / 指定 app
+python -m server.scripts.rebuild_android_apks --limit 20
+python -m server.scripts.rebuild_android_apks --app-id abcd1234
+```
+
+每个生成的应用都有**自己独立的**签名证书（存放在 `ANDROID_KEYSTORE_DIR`），因此更新可原地安装。
 
 **没有 SDK 时**，跳过 APK 生成，安卓用户改为获得可安装的 PWA 包——其余功能照常工作。
 

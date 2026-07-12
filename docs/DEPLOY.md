@@ -177,7 +177,40 @@ To produce a real, installable WebView APK the server needs the Android build to
 - `apktool`
 - a JDK providing `java`, `javac`, `keytool`
 
-Point the app at the SDK with `ANDROID_HOME` / `ANDROID_SDK_ROOT` if it isn't auto-detected. Each generated app gets its **own** signing certificate (stored under `ANDROID_KEYSTORE_DIR`), so updates install in place.
+### One-shot install (Linux)
+
+```bash
+# root (or writable /opt and /usr/local/bin) required
+sudo bash server/scripts/install_android_sdk.sh
+```
+
+The script installs to `/opt/android-sdk` (platform 34 + build-tools 34.0.0) and places
+`apktool` at `server/engine/_android_tools/apktool.jar` plus `/usr/local/bin/apktool`.
+
+Then set in your env file (or systemd `EnvironmentFile`):
+
+```bash
+ANDROID_HOME=/opt/android-sdk
+ANDROID_SDK_ROOT=/opt/android-sdk
+PATH=/opt/android-sdk/build-tools/34.0.0:/opt/android-sdk/platform-tools:/usr/local/bin:$PATH
+```
+
+Restart the service and check `/api/metrics` for `"android_apk": true`.
+
+### Rebuild historical zip fallbacks into real APKs
+
+If the server previously lacked the SDK, some apps only have `android.zip`. After the toolchain is ready:
+
+```bash
+# rebuild apps missing android.apk and upload to R2 when configured
+python -m server.scripts.rebuild_android_apks
+
+# first 20 only / specific app
+python -m server.scripts.rebuild_android_apks --limit 20
+python -m server.scripts.rebuild_android_apks --app-id abcd1234
+```
+
+Each generated app gets its **own** signing certificate (stored under `ANDROID_KEYSTORE_DIR`), so updates install in place.
 
 **Without the SDK**, APK generation is skipped and Android users get an installable PWA package instead — everything else still works.
 
