@@ -170,6 +170,25 @@ public class M extends Activity {
                     if (isAdHost(request.getUrl().getHost())) {
                         return emptyResponse();
                     }
+                    // Desktop mode: force a desktop-size layout viewport.
+                    // A site's <meta name="viewport" content="width=device-width">
+                    // pins the layout viewport to the phone width, so responsive
+                    // pages render the mobile layout even when the user agent is
+                    // desktop. Chrome's "request desktop site" uses a ~980px
+                    // viewport, but WebView has no public API for that, so for the
+                    // main-frame document we strip the viewport meta from the HTML
+                    // before it is parsed. Without the meta the layout viewport
+                    // falls back to the wide desktop viewport.
+                    if (config != null && config.desktopMode
+                            && request.isForMainFrame()
+                            && "GET".equalsIgnoreCase(request.getMethod())
+                            && ("http".equals(request.getUrl().getScheme())
+                                || "https".equals(request.getUrl().getScheme()))) {
+                        try {
+                            WebResourceResponse desktop = desktopHtml(request.getUrl().toString());
+                            if (desktop != null) return desktop;
+                        } catch (Throwable ignored) {}
+                    }
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -224,6 +243,60 @@ public class M extends Activity {
 
     private String sanitizeUserAgent(String ua) {
         return ua.replace("; wv", "").replace(" Version/4.0", "");
+    }
+
+    /**
+     * Desktop mode helper. Fetches the main-frame document over the desktop
+     * user agent and returns it with any viewport meta tag removed, so the
+     * layout viewport falls back to the wide (~980px) desktop viewport.
+     * Response headers (Set-Cookie, Cache-Control, ...) are passed through so
+     * sessions and caching behave like a normal request. Returns null on any
+     * failure so the caller falls back to the default WebView request.
+     */
+    private WebResourceResponse desktopHtml(String url) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("User-Agent", DESKTOP_USER_AGENT);
+            String cookies = CookieManager.getInstance().getCookie(url);
+            if (cookies != null && !cookies.isEmpty()) {
+                conn.setRequestProperty("Cookie", cookies);
+            }
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+            java.io.InputStream in = conn.getInputStream();
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[16384];
+            int n;
+            while ((n = in.read(chunk)) != -1) buf.write(chunk, 0, n);
+            in.close();
+            String contentType = conn.getContentType();
+            String charset = "utf-8";
+            if (contentType != null) {
+                java.util.regex.Matcher cm = java.util.regex.Pattern
+                    .compile("charset=([^;\\s]+)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(contentType);
+                if (cm.find()) charset = cm.group(1).replace("\"", "").trim();
+            }
+            String html = new String(buf.toByteArray(), charset);
+            html = html.replaceAll(
+                "(?is)<meta\\b[^>]*\\bname\\s*=\\s*[\"']?viewport[\"']?[^>]*>", "");
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            for (java.util.Map.Entry<String, java.util.List<String>> e : conn.getHeaderFields().entrySet()) {
+                if (e.getKey() != null && e.getValue() != null && !e.getValue().isEmpty()) {
+                    headers.put(e.getKey(), e.getValue().get(0));
+                }
+            }
+            return new WebResourceResponse("text/html", charset, code, "OK", headers,
+                new ByteArrayInputStream(html.getBytes(charset)));
+        } catch (Throwable e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     private AppConfig loadConfig() {
