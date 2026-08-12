@@ -23,6 +23,7 @@ Every intentional change follows this loop. Hard rules:
 4. **Commit only intended files.** No secrets, no `generated/`, no `certs/*.keystore|*.pem`, no IDE/OS junk. Clear *why* in the message.
 5. **Open a PR into `main`** with `Fixes #N` or `Closes #N` in the body, plus a Summary and a Test plan (the PR template reminds you). The Issue closes **on merge only** — never when the PR is opened or while CI is red.
 6. **CI is the merge gate.** The `ci / test` workflow runs `pytest tests/` on Python 3.10 / 3.11 / 3.12. Do not merge red checks. CI never auto-closes Issues.
+   Required check name for branch protection (pick one matrix leg, e.g. 3.11; the rest are advisory): `test (3.11)` — GitHub reports the job name only, without the `ci /` prefix.
 7. **One primary Issue per PR.** Extra Issues: link in the body without extra closing keywords.
 8. **If you cannot merge** (no permission): open the PR, comment on the Issue with the PR URL and CI status, leave the Issue open, and hand off to a maintainer.
 

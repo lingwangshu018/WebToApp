@@ -24,6 +24,7 @@ Issue → PR into main → CI green → merge → Issue auto-closes
    - **Fixes #N** (or `Closes #N`) — so the Issue closes automatically when the PR merges.
    - **Test plan** — how you verified the change.
 6. **Wait for CI.** The `ci / test` workflow runs the test suite on Python 3.10 / 3.11 / 3.12. It must be green before merging.
+   Required check name for branch protection: `test (3.11)` (job name only; pick one matrix leg, the rest are advisory).
 7. **Merge.** Once green, a maintainer merges the PR and the Issue closes on its own.
 
 ## Rules

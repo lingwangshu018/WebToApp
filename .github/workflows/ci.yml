@@ -4,8 +4,9 @@
 # is required before merging. This workflow MUST NOT close issues (issues
 # close via `Fixes #N` / `Closes #N` in the PR body, on merge only).
 #
-# Required check name for branch protection: `ci / test (Python <version>)`
-# (pick one version, e.g. 3.11, as the required check; the rest are advisory).
+# Required check name for branch protection: `test (Python <version>)`
+# (job name only — GitHub does not include the `ci /` workflow prefix).
+# Pick one matrix leg, e.g. 3.11, as the required check; the rest are advisory.
 name: ci
 
 on:

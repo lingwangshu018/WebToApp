@@ -2,7 +2,7 @@
 Delivery loop: Issue → PR into main → CI green → merge → Issue auto-closes.
   • Base branch is always `main`.
   • Reference the primary Issue with `Fixes #N` or `Closes #N` so it closes on merge only.
-  • CI (`ci / test`) must be green before merging; never merge red.
+  • CI (`ci / test`, required check `test (3.11)`) must be green before merging; never merge red.
   • One primary Issue per PR; no secrets or machine-local junk in commits.
 See AGENTS.md / CONTRIBUTING.md for the full loop.
 -->
