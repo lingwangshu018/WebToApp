@@ -140,7 +140,17 @@
   const historyExportBtn = document.getElementById('history-export-btn');
   const historyImportBtn = document.getElementById('history-import-btn');
   const historyImportInput = document.getElementById('history-import-input');
+  const modeUrlBtn = document.getElementById('mode-url-btn');
+  const modeHtmlBtn = document.getElementById('mode-html-btn');
+  const urlInputWrap = document.getElementById('url-input-wrap');
+  const htmlInputWrap = document.getElementById('html-input-wrap');
+  const htmlFileInput = document.getElementById('html-file-input');
+  const htmlDropzone = document.getElementById('html-dropzone');
+  const htmlFileLabel = document.getElementById('html-file-label');
+  const htmlFileHint = document.getElementById('html-file-hint');
   let currentUrl = '';
+  let inputMode = 'url'; // 'url' | 'html'
+  let htmlFile = null;
   let pendingAutoScrollTimer = null;
   let customIconDataUrl = '';
   let detectedIconDataUrl = '';
@@ -264,6 +274,48 @@
       'Content-Type': 'application/json',
       'X-Device-Fingerprint': deviceFingerprint,
     };
+  }
+
+  // Multipart uploads must not carry a JSON Content-Type; the browser sets
+  // the multipart boundary itself.
+  function apiUploadHeaders() {
+    return { 'X-Device-Fingerprint': deviceFingerprint };
+  }
+
+  function apiErrorMessage(detail, fallbackKey) {
+    if (detail && typeof detail === 'object') {
+      if (detail.code) {
+        const translated = t(detail.code, { msg: detail.message || '' });
+        if (translated !== detail.code) return translated;
+      }
+      if (detail.message) return String(detail.message);
+      return t(fallbackKey);
+    }
+    if (typeof detail === 'string' && detail) return detail;
+    return t(fallbackKey);
+  }
+
+  function setInputMode(mode) {
+    inputMode = mode === 'html' ? 'html' : 'url';
+    modeUrlBtn.classList.toggle('active', inputMode === 'url');
+    modeHtmlBtn.classList.toggle('active', inputMode === 'html');
+    urlInputWrap.classList.toggle('hidden', inputMode === 'html');
+    htmlInputWrap.classList.toggle('hidden', inputMode !== 'html');
+  }
+
+  function formatBytes(bytes) {
+    const n = Number(bytes || 0);
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${n} B`;
+  }
+
+  function resetHtmlFile() {
+    htmlFile = null;
+    htmlFileInput.value = '';
+    htmlDropzone.classList.remove('has-file');
+    htmlFileLabel.textContent = t('mode.htmlPick');
+    htmlFileHint.textContent = t('mode.htmlHint');
   }
 
   async function attachHistoryItem(appId) {
@@ -406,6 +458,10 @@
       const iconHtml = item.icon_url
         ? `<img class="history-icon" src="${escapeHtml(item.icon_url)}" alt="${escapeHtml(item.name || item.app_id)}">`
         : `<div class="history-icon" aria-hidden="true"></div>`;
+      const isHtmlApp = !!(item.recipe && item.recipe.source_type === 'html');
+      const htmlBadge = isHtmlApp
+        ? `<span class="history-badge-html">${escapeHtml(t('history.badgeHtml'))}</span>`
+        : '';
       card.className = 'history-card';
       card._historyItem = item;
       card.innerHTML = `
@@ -413,7 +469,7 @@
           <div class="history-name-row">
             ${iconHtml}
             <div class="history-name-block">
-              <div class="history-name">${escapeHtml(item.name || item.app_id)}</div>
+              <div class="history-name">${escapeHtml(item.name || item.app_id)}${htmlBadge}</div>
               <div class="history-link">${escapeHtml(publicPath)}</div>
             </div>
           </div>
@@ -566,19 +622,39 @@
     if (customIconDataUrl) options['custom-icon-data-url'] = customIconDataUrl;
     Object.assign(options, collectFeatureOptions());
 
-    const submitRes = await fetch('/api/distill', {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({
-        url: currentUrl,
-        name: appNameInput.value,
-        color: appColorInput.value,
-        display: 'fullscreen',
-        orientation: 'any',
-        options: options,
-      }),
-    });
-    if (!submitRes.ok) throw new Error(t('err.generateFailed'));
+    let submitRes;
+    if (inputMode === 'html') {
+      if (!htmlFile) throw new Error(t('err.htmlNoFile'));
+      const form = new FormData();
+      form.append('file', htmlFile, htmlFile.name);
+      form.append('name', appNameInput.value);
+      form.append('color', appColorInput.value);
+      form.append('display', 'fullscreen');
+      form.append('orientation', 'any');
+      form.append('options', JSON.stringify(options));
+      submitRes = await fetch('/api/distill/html', {
+        method: 'POST',
+        headers: apiUploadHeaders(),
+        body: form,
+      });
+    } else {
+      submitRes = await fetch('/api/distill', {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          url: currentUrl,
+          name: appNameInput.value,
+          color: appColorInput.value,
+          display: 'fullscreen',
+          orientation: 'any',
+          options: options,
+        }),
+      });
+    }
+    if (!submitRes.ok) {
+      const err = await submitRes.json().catch(() => null);
+      throw new Error(apiErrorMessage(err && err.detail, 'err.generateFailed'));
+    }
     const task = await submitRes.json();
     if (!task.task_id) throw new Error(t('err.taskSubmitFailed'));
 
@@ -606,12 +682,12 @@
         });
         if (pollRes.status === 404) throw new Error(t('err.taskMissing'));
         if (!pollRes.ok) {
-          let message = t('err.generateFailed');
+          let message = '';
           try {
             const err = await pollRes.json();
-            if (err && err.detail) message = String(err.detail);
+            message = apiErrorMessage(err && err.detail, 'err.generateFailed');
           } catch (_err) {}
-          throw new Error(message);
+          throw new Error(message || t('err.generateFailed'));
         }
         const payload = await pollRes.json();
         if (payload && payload.status && payload.task_id) {
@@ -710,8 +786,126 @@
   }
 
   // --- Distill Flow ---
-  distillBtn.addEventListener('click', startDistill);
-  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startDistill(); });
+  distillBtn.addEventListener('click', () => {
+    if (inputMode === 'html') {
+      if (!htmlFile) {
+        alert(t('err.htmlNoFile'));
+        return;
+      }
+      scheduleGentleScroll(workspace, { block: 'start', threshold: 0.55, delay: 120 });
+      return;
+    }
+    startDistill();
+  });
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && inputMode === 'url') startDistill(); });
+  modeUrlBtn.addEventListener('click', () => setInputMode('url'));
+  modeHtmlBtn.addEventListener('click', () => setInputMode('html'));
+  htmlFileInput.addEventListener('change', () => {
+    const file = htmlFileInput.files && htmlFileInput.files[0];
+    if (!file) return;
+    selectHtmlFile(file);
+  });
+  ['dragover', 'dragenter'].forEach((eventName) => {
+    htmlDropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      htmlDropzone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach((eventName) => {
+    htmlDropzone.addEventListener(eventName, () => htmlDropzone.classList.remove('dragover'));
+  });
+  htmlDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) selectHtmlFile(file);
+  });
+
+  async function selectHtmlFile(file) {
+    htmlFile = file;
+    htmlFileLabel.textContent = file.name;
+    htmlFileHint.textContent = `${formatBytes(file.size)} · ${t('mode.htmlHint')}`;
+    htmlDropzone.classList.add('has-file');
+    await startHtmlAnalyze(file);
+  }
+
+  async function startHtmlAnalyze(file) {
+    let data = null;
+    let uploadError = null;
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch('/api/analyze/html', {
+        method: 'POST',
+        headers: apiUploadHeaders(),
+        body: form,
+      });
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        const err = await res.json().catch(() => null);
+        uploadError = apiErrorMessage(err && err.detail, 'err.generateFailed');
+      }
+    } catch (_err) {
+      // Network failure: fall through to a local, file-name-only prefill.
+    }
+    if (uploadError) {
+      alert(uploadError);
+      resetHtmlFile();
+      return;
+    }
+    if (!data) {
+      data = {
+        sourceType: 'html',
+        name: file.name.replace(/\.(html?|zip)$/i, ''),
+        color: '',
+        iconDataUrl: '',
+        fileCount: 0,
+        totalBytes: file.size,
+      };
+    }
+    workspace.classList.remove('hidden');
+    resultPanel.classList.add('hidden');
+    showHtmlAnalysisResults(data);
+    scheduleGentleScroll(workspace, { block: 'start', threshold: 0.55, delay: 120 });
+  }
+
+  function showHtmlAnalysisResults(data) {
+    analysisStatus.textContent = t('analysis.statusDone');
+    analysisStatus.className = 'status-badge done';
+    const suggestedName = String(data.name || '').trim()
+      || (htmlFile ? htmlFile.name.replace(/\.(html?|zip)$/i, '') : '');
+    if (suggestedName) {
+      syncInputValue(appNameInput, suggestedName);
+      updateAppNameSourceNote(data.name ? 'title_full' : '', suggestedName);
+    }
+    const themeColor = String(data.color || '').trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(themeColor)) {
+      syncInputValue(appColorInput, themeColor);
+      colorHex.textContent = themeColor.toUpperCase();
+    }
+    if (data.iconDataUrl) {
+      detectedIconDataUrl = String(data.iconDataUrl);
+      setRestoreIconState(detectedIconDataUrl, {
+        label: t('icon.autoFetched'),
+        fileName: t('icon.autoFetchedFile'),
+        buttonLabel: t('icon.restoreAutoFetch'),
+      });
+      fillIconPreview(detectedIconDataUrl, t('icon.autoFetched'));
+      if (customIconFileName) customIconFileName.textContent = t('icon.autoFetchedFile');
+    } else {
+      detectedIconDataUrl = '';
+      setRestoreIconState('', {});
+      fillIconPreview('', '');
+    }
+    analysisBody.innerHTML = `
+      <div class="analysis-results">
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.suggestedName'))}</span><span class="value good">${escapeHtml(suggestedName || t('analysis.notSaved'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.iconStatus'))}</span><span class="value ${data.iconDataUrl ? 'good' : 'info'}">${escapeHtml(data.iconDataUrl ? t('analysis.iconAutoFetched') : t('analysis.iconNotDetected'))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.htmlFiles'))}</span><span class="value info">${Number(data.fileCount || 0).toLocaleString(locale())}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.htmlTotalSize'))}</span><span class="value info">${escapeHtml(formatBytes(data.totalBytes || 0))}</span></div>
+        <div class="analysis-item"><span class="label">${escapeHtml(t('analysis.htmlSource'))}</span><span class="value info">${escapeHtml(t('analysis.htmlSourceValue'))}</span></div>
+      </div>`;
+  }
 
   async function startDistill() {
     const raw = urlInput.value.trim();

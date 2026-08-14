@@ -37,6 +37,7 @@
 
 ## 功能
 
+- **两种输入方式**：输入网站链接，或直接上传自己的 HTML——单个 `.html` 文件，或包含 `index.html` 的 `.zip` 压缩包。上传的 HTML 由服务器托管（`/a/<id>/site/...`），打包流程与网址模式完全一致。
 - **站点分析**：抓取目标页面，提取名称、主题色、图标，并统计广告/追踪器/弹窗（展示用估算）。
 - **多平台打包**：一次生成五端安装包
   - **Android** — 真实可安装的 WebView APK（v1+v2+v3 签名）。每个应用使用**独立签名证书**。
@@ -79,6 +80,7 @@
 ├── server/
 │   ├── main.py             FastAPI 应用与路由
 │   ├── config.py           环境变量配置
+│   ├── html_site.py        HTML 上传暂存/校验/托管（HTML 转 App）
 │   ├── history_store.py    设备历史存储（JSON）
 │   └── engine/
 │       ├── analyzer.py     站点分析

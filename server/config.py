@@ -177,6 +177,46 @@ def trusted_proxy_cidrs() -> list[str]:
     return values or ["127.0.0.1/32", "::1/128"]
 
 
+# ---------- HTML-to-App uploads ----------
+#
+# Uploaded HTML content (.html single file or .zip site bundle) is hosted by
+# this server under generated/<app_id>/site/ and served via /a/{id}/site/.
+# These caps bound disk usage and the zip-decompression attack surface.
+
+def html_upload_max_bytes() -> int:
+    """Maximum accepted request body for an HTML upload (compressed zip size
+    counts against this too). Default 10 MB."""
+    try:
+        return max(64 * 1024, int(os.environ.get("HTML_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024)).strip()))
+    except ValueError:
+        return 10 * 1024 * 1024
+
+
+def html_site_max_uncompressed_bytes() -> int:
+    """Maximum total uncompressed size of an extracted zip site bundle. Default 20 MB."""
+    try:
+        return max(64 * 1024, int(os.environ.get("HTML_SITE_MAX_UNCOMPRESSED_BYTES", str(20 * 1024 * 1024)).strip()))
+    except ValueError:
+        return 20 * 1024 * 1024
+
+
+def html_site_max_file_count() -> int:
+    """Maximum number of files inside an uploaded zip site bundle. Default 500."""
+    try:
+        return max(1, int(os.environ.get("HTML_SITE_MAX_FILE_COUNT", "500").strip() or "500"))
+    except ValueError:
+        return 500
+
+
+def html_export_max_bytes() -> int:
+    """Maximum total site size embedded in an exported history snapshot.
+    Larger sites are skipped from the export and flagged instead. Default 2 MB."""
+    try:
+        return max(0, int(os.environ.get("HTML_EXPORT_MAX_BYTES", str(2 * 1024 * 1024)).strip()))
+    except ValueError:
+        return 2 * 1024 * 1024
+
+
 # ---------- Cloudflare R2 (S3-compatible) ----------
 #
 # Set ALL of the following to enable R2 offload. Once configured, every

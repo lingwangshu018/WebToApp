@@ -23,6 +23,7 @@ from server.engine.apk_builder import ApkBuilder
 from server.engine import mobileconfig_signer
 from server.engine.cache import html_cache, icon_cache
 from server.engine.storage import r2_storage
+from server import html_site
 from server.htmlmeta import parse_html_metadata
 from server.logging_util import log_event
 from server.net import fetch_public_url_bytes
@@ -37,15 +38,17 @@ class Distiller:
     _FEATURE_DOWNLOAD_DIR_VALUES = {"public_downloads", "app_folder"}
     _FEATURE_PERMISSION_VALUES = {"prompt", "deny"}
 
-    def create_recipe(self, app_id, url, name, color, display, orientation, options):
+    def create_recipe(self, app_id, url, name, color, display, orientation, options,
+                      source_type="url", content_hash=None):
         clean_name = name or url.split("//")[-1].split("/")[0].replace("www.", "")
         version_code = self._android_version_code(app_id, options)
         version_name = self._android_version_name(options)
         package_prefix = self._android_package_prefix(options)
         feature_options = self._feature_options(options)
-        return {
+        recipe = {
             "id": app_id, "url": url, "name": clean_name,
             "color": color, "display": display, "orientation": orientation,
+            "source_type": source_type or "url",
             "android_version_code": version_code,
             "android_version_name": version_name,
             "android_package_prefix": package_prefix,
@@ -54,6 +57,9 @@ class Distiller:
             "edit_token": self._edit_token(app_id),
             "options": feature_options,
         }
+        if recipe["source_type"] == "html":
+            recipe["content_hash"] = content_hash or ""
+        return recipe
 
     def _edit_token(self, app_id):
         """Secret token gating URL hot-swaps for this app. Stable per app_id:
@@ -281,6 +287,10 @@ class Distiller:
         custom_icon = self._custom_icon_png(recipe.get("_custom_icon_data_url"))
         if custom_icon:
             return custom_icon
+        if recipe.get("source_type") == "html":
+            # Content is local: custom icon > favicon declared in the uploaded
+            # HTML > solid-color placeholder. No network fallback.
+            return self._local_site_icon(recipe) or self._make_placeholder_png(recipe.get("color", "#7c3aed"))
         url = recipe["url"]
         host = urlparse(url).netloc.lower()
         cache_key = f"icon:{host}"
@@ -293,6 +303,17 @@ class Distiller:
             icon_cache.set(cache_key, best)
             return best
         return self._make_placeholder_png(recipe.get("color", "#7c3aed"))
+
+    def _local_site_icon(self, recipe):
+        """Favicon extracted from the staged HTML bundle (PNG or ICO → PNG)."""
+        site_dir = self._generated_root() / recipe["id"] / "site"
+        if not site_dir.is_dir():
+            return None
+        meta = html_site.extract_site_meta(site_dir)
+        raw = meta.get("icon_png")
+        if not raw:
+            return None
+        return self._normalize_to_png(raw)
 
     def _custom_icon_png(self, data_url):
         if not data_url:
@@ -565,7 +586,9 @@ class Distiller:
     def render_download_page(self, app_dir: Path, r: dict) -> str:
         base = f"/a/{r['id']}"
         parsed = urlparse(r["url"])
-        source_host = parsed.netloc.replace("www.", "") or r["url"]
+        is_html_app = r.get("source_type") == "html"
+        source_host = "HTML App" if is_html_app else (parsed.netloc.replace("www.", "") or r["url"])
+        open_site_key = "openApp" if is_html_app else "openSite"
         favicon = f"{base}/icon.png" if (app_dir / "icon.png").exists() \
             else f"https://www.google.com/s2/favicons?domain={parsed.netloc}&sz=128"
         cfg = app_dir / "downloads" / "ios.mobileconfig"
@@ -774,7 +797,7 @@ a{{color:inherit;text-decoration:none}}
           </div>
         </div>
         <div class="app-actions">
-          <a class="action primary" href="{r['url']}" target="_blank" rel="noopener noreferrer" data-i18n="openSite">Open original site</a>
+          <a class="action primary" href="{r['url']}" target="_blank" rel="noopener noreferrer" data-i18n="{open_site_key}">Open original site</a>
           <a class="action" href="{base}/download/ios" data-i18n="downloadIosProfile">Download iPhone profile</a>
         </div>
       </div>
@@ -850,6 +873,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "This is not an app store page, just this site's install entry. Pick your device, then download to install, unzip, or add to the iPhone home screen.",
                 "appSub": "The multi-platform installers and config profile generated for this site. You can send this page directly to users without explaining the download paths.",
                 "openSite": "Open original site",
+                "openApp": "Open app",
                 "downloadIosProfile": "Download iPhone profile",
                 "iosTitle": "iPhone install guide",
                 "iosBadgeSigned": "Signed",
@@ -883,6 +907,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "这不是一个市场页，只是这个网站的安装入口。选好你的设备，下载后就可以直接安装、解压，或者在 iPhone 上添加到主屏幕。",
                 "appSub": "为当前站点生成的多端安装包与安装描述文件。你可以直接把这个页面发给用户，不需要再解释下载路径。",
                 "openSite": "打开原站",
+                "openApp": "打开应用",
                 "downloadIosProfile": "下载 iPhone 描述文件",
                 "iosTitle": "iPhone 安装说明",
                 "iosBadgeSigned": "已签名",
@@ -916,6 +941,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "これはアプリストアのページではなく、このサイトのインストール入口です。デバイスを選び、ダウンロードしてインストール・解凍、または iPhone のホーム画面に追加してください。",
                 "appSub": "このサイト向けに生成したマルチプラットフォームのインストーラーと構成プロファイルです。このページをそのままユーザーに送れます。ダウンロード手順を説明する必要はありません。",
                 "openSite": "元のサイトを開く",
+                "openApp": "アプリを開く",
                 "downloadIosProfile": "iPhone プロファイルをダウンロード",
                 "iosTitle": "iPhone インストール手順",
                 "iosBadgeSigned": "署名済み",
@@ -949,6 +975,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "هذه ليست صفحة متجر تطبيقات، بل مجرد مدخل التثبيت لهذا الموقع. اختر جهازك، ثم نزّل للتثبيت أو فك الضغط أو الإضافة إلى الشاشة الرئيسية في iPhone.",
                 "appSub": "حِزم التثبيت متعددة المنصات وملف التهيئة المُولّدة لهذا الموقع. يمكنك إرسال هذه الصفحة مباشرةً إلى المستخدمين دون شرح مسارات التنزيل.",
                 "openSite": "فتح الموقع الأصلي",
+                "openApp": "فتح التطبيق",
                 "downloadIosProfile": "تنزيل ملف تعريف iPhone",
                 "iosTitle": "دليل تثبيت iPhone",
                 "iosBadgeSigned": "موقّع",
@@ -982,6 +1009,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "Это не страница магазина приложений, а просто точка установки этого сайта. Выберите устройство, затем скачайте, чтобы установить, распаковать или добавить на главный экран iPhone.",
                 "appSub": "Кроссплатформенные установщики и профиль конфигурации, созданные для этого сайта. Эту страницу можно отправлять пользователям без объяснения путей загрузки.",
                 "openSite": "Открыть исходный сайт",
+                "openApp": "Открыть приложение",
                 "downloadIosProfile": "Скачать профиль iPhone",
                 "iosTitle": "Инструкция по установке на iPhone",
                 "iosBadgeSigned": "Подписано",
@@ -1015,6 +1043,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "Esta no es una página de tienda de apps, solo la entrada de instalación de este sitio. Elige tu dispositivo y descarga para instalar, descomprimir o añadir a la pantalla de inicio del iPhone.",
                 "appSub": "Los instaladores multiplataforma y el perfil de configuración generados para este sitio. Puedes enviar esta página directamente a los usuarios sin explicar las rutas de descarga.",
                 "openSite": "Abrir sitio original",
+                "openApp": "Abrir aplicación",
                 "downloadIosProfile": "Descargar perfil de iPhone",
                 "iosTitle": "Guía de instalación en iPhone",
                 "iosBadgeSigned": "Firmado",
@@ -1048,6 +1077,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "Esta não é uma página de loja de apps, apenas a entrada de instalação deste site. Escolha seu dispositivo e baixe para instalar, descompactar ou adicionar à tela inicial do iPhone.",
                 "appSub": "Os instaladores multiplataforma e o perfil de configuração gerados para este site. Você pode enviar esta página diretamente aos usuários sem explicar os caminhos de download.",
                 "openSite": "Abrir site original",
+                "openApp": "Abrir aplicativo",
                 "downloadIosProfile": "Baixar perfil do iPhone",
                 "iosTitle": "Guia de instalação no iPhone",
                 "iosBadgeSigned": "Assinado",
@@ -1081,6 +1111,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "Ce n'est pas une page de boutique d'applications, juste le point d'installation de ce site. Choisissez votre appareil, puis téléchargez pour installer, décompresser ou ajouter à l'écran d'accueil de l'iPhone.",
                 "appSub": "Les installateurs multiplateformes et le profil de configuration générés pour ce site. Vous pouvez envoyer cette page directement aux utilisateurs sans expliquer les chemins de téléchargement.",
                 "openSite": "Ouvrir le site d'origine",
+                "openApp": "Ouvrir l'application",
                 "downloadIosProfile": "Télécharger le profil iPhone",
                 "iosTitle": "Guide d'installation iPhone",
                 "iosBadgeSigned": "Signé",
@@ -1114,6 +1145,7 @@ a{{color:inherit;text-decoration:none}}
                 "heroDesc": "Dies ist keine App-Store-Seite, nur der Installationseinstieg dieser Website. Wähle dein Gerät und lade herunter, um zu installieren, zu entpacken oder zum iPhone-Startbildschirm hinzuzufügen.",
                 "appSub": "Die plattformübergreifenden Installer und das Konfigurationsprofil, die für diese Website erstellt wurden. Du kannst diese Seite direkt an Nutzer senden, ohne die Download-Pfade zu erklären.",
                 "openSite": "Originalseite öffnen",
+                "openApp": "App öffnen",
                 "downloadIosProfile": "iPhone-Profil herunterladen",
                 "iosTitle": "iPhone-Installationsanleitung",
                 "iosBadgeSigned": "Signiert",
