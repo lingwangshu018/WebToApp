@@ -9,6 +9,18 @@
 
   // ---------- English (base / fallback) ----------
   R('en', {
+    'mode.url': 'Website URL',
+    'mode.html': 'HTML file',
+    'mode.htmlPick': 'Choose .html or .zip file',
+    'mode.htmlHint': 'A single HTML file, or a zip containing index.html',
+    'err.htmlNoFile': 'Please choose an .html or .zip file first',
+    'htmlUpload.tooLarge': 'Uploaded file is too large',
+    'htmlUpload.invalid': 'Invalid upload: {msg}',
+    'analysis.htmlFiles': 'Files in package',
+    'analysis.htmlTotalSize': 'Package size',
+    'analysis.htmlSource': 'Source type',
+    'analysis.htmlSourceValue': 'Uploaded HTML',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Turn websites into apps | Free & Open Source',
     'meta.description': 'Enter a URL and get an app you can install, share and use right away. Works on iPhone, Android, Windows, macOS and Linux.',
     'meta.ogTitle': 'WebToApp — Turn websites into apps',
@@ -186,6 +198,18 @@
 
   // ---------- 简体中文 ----------
   R('zh', {
+    'mode.url': '网站链接',
+    'mode.html': 'HTML 文件',
+    'mode.htmlPick': '选择 .html 或 .zip 文件',
+    'mode.htmlHint': '单个 HTML 文件，或包含 index.html 的 zip 压缩包',
+    'err.htmlNoFile': '请先选择 .html 或 .zip 文件',
+    'htmlUpload.tooLarge': '上传的文件过大',
+    'htmlUpload.invalid': '文件无效：{msg}',
+    'analysis.htmlFiles': '包内文件数',
+    'analysis.htmlTotalSize': '包大小',
+    'analysis.htmlSource': '来源类型',
+    'analysis.htmlSourceValue': '上传的 HTML',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — 把网站做成应用 | 免费开源',
     'meta.description': '输入一个网址，得到一个可以安装、可以分享、可以直接使用的应用。支持 iPhone、Android、Windows、macOS 和 Linux。',
     'meta.ogTitle': 'WebToApp — 把网站做成应用',
@@ -363,6 +387,18 @@
 
   // ---------- 日本語 ----------
   R('ja', {
+    'mode.url': 'ウェブサイトURL',
+    'mode.html': 'HTML ファイル',
+    'mode.htmlPick': '.html または .zip ファイルを選択',
+    'mode.htmlHint': '単一の HTML ファイル、または index.html を含む zip',
+    'err.htmlNoFile': '先に .html または .zip ファイルを選択してください',
+    'htmlUpload.tooLarge': 'ファイルが大きすぎます',
+    'htmlUpload.invalid': '無効なアップロードです：{msg}',
+    'analysis.htmlFiles': 'ファイル数',
+    'analysis.htmlTotalSize': 'パッケージサイズ',
+    'analysis.htmlSource': 'ソース種別',
+    'analysis.htmlSourceValue': 'アップロードされた HTML',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — ウェブサイトをアプリに | 無料・オープンソース',
     'meta.description': 'URL を入力するだけで、インストール・共有・すぐに使えるアプリが手に入ります。iPhone、Android、Windows、macOS、Linux に対応。',
     'meta.ogTitle': 'WebToApp — ウェブサイトをアプリに',
@@ -540,6 +576,18 @@
 
   // ---------- العربية (RTL) ----------
   R('ar', {
+    'mode.url': 'رابط موقع',
+    'mode.html': 'ملف HTML',
+    'mode.htmlPick': 'اختر ملف .html أو .zip',
+    'mode.htmlHint': 'ملف HTML واحد، أو ملف zip يحتوي على index.html',
+    'err.htmlNoFile': 'يرجى اختيار ملف .html أو .zip أولاً',
+    'htmlUpload.tooLarge': 'الملف المرفوع كبير جدًا',
+    'htmlUpload.invalid': 'تحميل غير صالح: {msg}',
+    'analysis.htmlFiles': 'عدد الملفات',
+    'analysis.htmlTotalSize': 'حجم الحزمة',
+    'analysis.htmlSource': 'نوع المصدر',
+    'analysis.htmlSourceValue': 'HTML مرفوع',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — حوّل المواقع إلى تطبيقات | مجاني ومفتوح المصدر',
     'meta.description': 'أدخل رابطًا واحصل على تطبيق يمكنك تثبيته ومشاركته واستخدامه فورًا. يعمل على iPhone وAndroid وWindows وmacOS وLinux.',
     'meta.ogTitle': 'WebToApp — حوّل المواقع إلى تطبيقات',
@@ -717,6 +765,18 @@
 
   // ---------- Русский ----------
   R('ru', {
+    'mode.url': 'Ссылка на сайт',
+    'mode.html': 'HTML-файл',
+    'mode.htmlPick': 'Выберите файл .html или .zip',
+    'mode.htmlHint': 'Один HTML-файл или zip с index.html внутри',
+    'err.htmlNoFile': 'Сначала выберите файл .html или .zip',
+    'htmlUpload.tooLarge': 'Файл слишком большой',
+    'htmlUpload.invalid': 'Недопустимая загрузка: {msg}',
+    'analysis.htmlFiles': 'Файлов в пакете',
+    'analysis.htmlTotalSize': 'Размер пакета',
+    'analysis.htmlSource': 'Тип источника',
+    'analysis.htmlSourceValue': 'Загруженный HTML',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Превратите сайты в приложения | Бесплатно и с открытым кодом',
     'meta.description': 'Введите URL и получите приложение, которое можно установить, поделиться им и сразу использовать. Работает на iPhone, Android, Windows, macOS и Linux.',
     'meta.ogTitle': 'WebToApp — Превратите сайты в приложения',
@@ -894,6 +954,18 @@
 
   // ---------- Español ----------
   R('es', {
+    'mode.url': 'URL del sitio',
+    'mode.html': 'Archivo HTML',
+    'mode.htmlPick': 'Elija un archivo .html o .zip',
+    'mode.htmlHint': 'Un solo archivo HTML, o un zip que contenga index.html',
+    'err.htmlNoFile': 'Elija primero un archivo .html o .zip',
+    'htmlUpload.tooLarge': 'El archivo subido es demasiado grande',
+    'htmlUpload.invalid': 'Subida no válida: {msg}',
+    'analysis.htmlFiles': 'Archivos en el paquete',
+    'analysis.htmlTotalSize': 'Tamaño del paquete',
+    'analysis.htmlSource': 'Tipo de origen',
+    'analysis.htmlSourceValue': 'HTML subido',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Convierte sitios web en aplicaciones | Gratis y de código abierto',
     'meta.description': 'Introduce una URL y obtén una app que puedes instalar, compartir y usar al instante. Funciona en iPhone, Android, Windows, macOS y Linux.',
     'meta.ogTitle': 'WebToApp — Convierte sitios web en aplicaciones',
@@ -1071,6 +1143,18 @@
 
   // ---------- Português ----------
   R('pt', {
+    'mode.url': 'URL do site',
+    'mode.html': 'Arquivo HTML',
+    'mode.htmlPick': 'Escolha um arquivo .html ou .zip',
+    'mode.htmlHint': 'Um único arquivo HTML, ou um zip contendo index.html',
+    'err.htmlNoFile': 'Escolha primeiro um arquivo .html ou .zip',
+    'htmlUpload.tooLarge': 'O arquivo enviado é muito grande',
+    'htmlUpload.invalid': 'Envio inválido: {msg}',
+    'analysis.htmlFiles': 'Arquivos no pacote',
+    'analysis.htmlTotalSize': 'Tamanho do pacote',
+    'analysis.htmlSource': 'Tipo de origem',
+    'analysis.htmlSourceValue': 'HTML enviado',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Transforme sites em aplicativos | Grátis e código aberto',
     'meta.description': 'Insira uma URL e obtenha um app que você pode instalar, compartilhar e usar na hora. Funciona em iPhone, Android, Windows, macOS e Linux.',
     'meta.ogTitle': 'WebToApp — Transforme sites em aplicativos',
@@ -1248,6 +1332,18 @@
 
   // ---------- Français ----------
   R('fr', {
+    'mode.url': 'URL du site',
+    'mode.html': 'Fichier HTML',
+    'mode.htmlPick': 'Choisir un fichier .html ou .zip',
+    'mode.htmlHint': 'Un seul fichier HTML, ou un zip contenant index.html',
+    'err.htmlNoFile': 'Choisissez d\'abord un fichier .html ou .zip',
+    'htmlUpload.tooLarge': 'Le fichier téléversé est trop volumineux',
+    'htmlUpload.invalid': 'Téléversement invalide : {msg}',
+    'analysis.htmlFiles': 'Fichiers dans le paquet',
+    'analysis.htmlTotalSize': 'Taille du paquet',
+    'analysis.htmlSource': 'Type de source',
+    'analysis.htmlSourceValue': 'HTML téléversé',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Transformez les sites web en applications | Gratuit et open source',
     'meta.description': 'Saisissez une URL et obtenez une application que vous pouvez installer, partager et utiliser immédiatement. Fonctionne sur iPhone, Android, Windows, macOS et Linux.',
     'meta.ogTitle': 'WebToApp — Transformez les sites web en applications',
@@ -1425,6 +1521,18 @@
 
   // ---------- Deutsch ----------
   R('de', {
+    'mode.url': 'Website-URL',
+    'mode.html': 'HTML-Datei',
+    'mode.htmlPick': '.html- oder .zip-Datei wählen',
+    'mode.htmlHint': 'Eine einzelne HTML-Datei oder ein Zip mit index.html',
+    'err.htmlNoFile': 'Bitte zuerst eine .html- oder .zip-Datei wählen',
+    'htmlUpload.tooLarge': 'Die hochgeladene Datei ist zu groß',
+    'htmlUpload.invalid': 'Ungültiger Upload: {msg}',
+    'analysis.htmlFiles': 'Dateien im Paket',
+    'analysis.htmlTotalSize': 'Paketgröße',
+    'analysis.htmlSource': 'Quelltyp',
+    'analysis.htmlSourceValue': 'Hochgeladenes HTML',
+    'history.badgeHtml': 'HTML',
     'meta.title': 'WebToApp — Websites in Apps verwandeln | Kostenlos & Open Source',
     'meta.description': 'Gib eine URL ein und erhalte eine App, die du installieren, teilen und sofort nutzen kannst. Funktioniert auf iPhone, Android, Windows, macOS und Linux.',
     'meta.ogTitle': 'WebToApp — Websites in Apps verwandeln',

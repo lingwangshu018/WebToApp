@@ -37,6 +37,7 @@ Open source · Free · No sign-up. Try it live at **[shiaho.sbs](https://shiaho.
 
 ## Features
 
+- **Two input modes**: paste a website URL, or upload your own HTML — a single `.html` file or a `.zip` bundle containing `index.html`. Uploaded HTML is hosted by the server (`/a/<id>/site/...`) and packaged exactly like a URL app.
 - **Site analysis**: fetches the target page and extracts the name, theme color and icon, and counts ads / trackers / popups (display-only estimates).
 - **Multi-platform packaging**: builds installers for five platforms at once
   - **Android** — a real, installable WebView APK (v1+v2+v3 signed). Each app uses its **own dedicated signing certificate**.
@@ -79,6 +80,7 @@ Measured on a real build (figures are representative; they barely vary by site):
 ├── server/
 │   ├── main.py             FastAPI app and routes
 │   ├── config.py           Environment-variable configuration
+│   ├── html_site.py        HTML-upload staging/validation/serving (HTML-to-App)
 │   ├── history_store.py    Per-device history store (JSON)
 │   └── engine/
 │       ├── analyzer.py     Site analysis

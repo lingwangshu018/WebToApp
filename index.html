@@ -14,9 +14,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=20260811-opt3">
-  <script src="js/i18n.js?v=20260811-opt3"></script>
-  <script src="js/i18n.strings.js?v=20260811-opt3"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260814-html1">
+  <script src="js/i18n.js?v=20260814-html1"></script>
+  <script src="js/i18n.strings.js?v=20260814-html1"></script>
 </head>
 <body>
   <canvas id="bg"></canvas>
@@ -52,12 +52,26 @@
           <div class="badge" data-i18n="hero.badge">Open source · Free · No sign-up</div>
           <p class="subtitle" data-i18n="hero.subtitle">Enter a link. Seconds later it can be installed, shared and used like an app. From iPhone to desktop, it is the same generated result.</p>
 
-          <div class="url-input-wrap">
+          <div class="source-mode" role="group" aria-label="Source type">
+            <button id="mode-url-btn" class="mode-btn active" type="button" data-i18n="mode.url">Website URL</button>
+            <button id="mode-html-btn" class="mode-btn" type="button" data-i18n="mode.html">HTML file</button>
+          </div>
+
+          <div class="url-input-wrap" id="url-input-wrap">
             <input id="url-input" type="url" data-i18n-placeholder="hero.urlPlaceholder" placeholder="Enter a website link" autocomplete="off" spellcheck="false">
             <button id="distill-btn" type="button">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
               <span data-i18n="hero.startBtn">Get started</span>
             </button>
+          </div>
+
+          <div class="html-input-wrap hidden" id="html-input-wrap">
+            <input id="html-file-input" class="sr-only" type="file" accept=".html,.htm,.zip">
+            <label for="html-file-input" class="html-dropzone" id="html-dropzone">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <span class="html-dropzone-label" id="html-file-label" data-i18n="mode.htmlPick">Choose .html or .zip file</span>
+              <small class="html-dropzone-hint" id="html-file-hint" data-i18n="mode.htmlHint">A single HTML file, or a zip containing index.html</small>
+            </label>
           </div>
 
           <div class="stats">
@@ -260,6 +274,6 @@
 
   </main>
 
-  <script src="js/app.v5.js?v=20260811-opt3"></script>
+  <script src="js/app.v5.js?v=20260814-html1"></script>
 </body>
 </html>

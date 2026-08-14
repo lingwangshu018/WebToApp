@@ -4,12 +4,14 @@ FastAPI backend: site analysis, content distillation, app generation & download.
 """
 
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
 import re
 import secrets
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -20,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +30,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 
 from server import config
+from server import html_site
 from server.engine.analyzer import SiteAnalyzer
 from server.engine.distiller import Distiller
 from server.engine.recipe import RecipeStore
@@ -239,7 +242,11 @@ class DistillTaskQueue:
     async def submit(self, payload: dict) -> dict:
         now = _utc_now_iso()
         task_id = uuid.uuid4().hex
-        app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
+        # HTML uploads pass an explicit app_id (derived from content hash);
+        # URL flows keep deriving it from url:name.
+        app_id = payload.get("app_id") or hashlib.md5(
+            f"{payload['url']}:{payload.get('name', '')}".encode()
+        ).hexdigest()[:8]
         task = {
             "task_id": task_id,
             "app_id": app_id,
@@ -439,16 +446,23 @@ def _history_payload(request: Request) -> dict:
     return {"items": items}
 
 
-def _import_recipe_from_payload(item: dict) -> dict:
+def _import_recipe_from_payload(item: dict, base_url: str = "") -> dict:
     snapshot = deepcopy(item.get("snapshot") or {})
     recipe = deepcopy(item.get("recipe") or snapshot.get("recipe") or {})
     app_id = str(item.get("app_id") or snapshot.get("app_id") or recipe.get("id") or "").strip()
-    target_url = str(recipe.get("url") or snapshot.get("target_url") or "").strip()
+    source_type = recipe.get("source_type") or snapshot.get("source_type") or "url"
+    if source_type == "html":
+        # The stored URL embeds the exporting server's base URL; re-derive it
+        # from the importing server so artifacts point at the right host.
+        target_url = f"{str(base_url or '').rstrip('/')}/a/{app_id}/site/{html_site.INDEX_NAME}"
+    else:
+        target_url = str(recipe.get("url") or snapshot.get("target_url") or "").strip()
     if not app_id or not target_url:
         raise ValueError("invalid history item")
     normalized = {
         "id": app_id,
         "url": target_url,
+        "source_type": source_type,
         "name": recipe.get("name") or snapshot.get("name") or app_id,
         "color": recipe.get("color") or snapshot.get("color") or "#7c3aed",
         "display": recipe.get("display") or snapshot.get("display") or "fullscreen",
@@ -459,6 +473,8 @@ def _import_recipe_from_payload(item: dict) -> dict:
         "custom_icon_uploaded": bool(item.get("icon_data_url") or recipe.get("custom_icon_uploaded") or snapshot.get("custom_icon_uploaded")),
         "options": recipe.get("options") or {},
     }
+    if source_type == "html":
+        normalized["content_hash"] = recipe.get("content_hash") or snapshot.get("content_hash") or ""
     icon_data_url = str(item.get("icon_data_url") or "").strip()
     if icon_data_url:
         normalized["_custom_icon_data_url"] = icon_data_url
@@ -466,15 +482,28 @@ def _import_recipe_from_payload(item: dict) -> dict:
 
 
 def _build_distill_response(payload: dict, progress_cb=None) -> dict:
-    app_id = hashlib.md5(f"{payload['url']}:{payload.get('name', '')}".encode()).hexdigest()[:8]
+    source_type = payload.get("source_type") or "url"
+    app_id = payload.get("app_id") or hashlib.md5(
+        f"{payload['url']}:{payload.get('name', '')}".encode()
+    ).hexdigest()[:8]
+    if source_type == "html":
+        # The "site" is hosted by this server; the recipe URL points at the
+        # staged content so every platform artifact reuses the URL pipeline.
+        base_url = str(payload.get("base_url") or "").rstrip("/")
+        site_index = payload.get("site_index") or html_site.INDEX_NAME
+        target_url = f"{base_url}/a/{app_id}/site/{site_index}"
+    else:
+        target_url = str(payload["url"])
     recipe = distiller.create_recipe(
         app_id=app_id,
-        url=str(payload["url"]),
+        url=target_url,
         name=payload.get("name") or "",
         color=payload.get("color") or "#7c3aed",
         display=payload.get("display") or "fullscreen",
         orientation=payload.get("orientation") or "any",
         options=payload.get("options") or {},
+        source_type=source_type,
+        content_hash=payload.get("content_hash"),
     )
     app_dir = APPS_DIR / app_id
     base_url = payload.get("base_url") or ""
@@ -695,20 +724,25 @@ async def _startup_services():
     retention_task = asyncio.create_task(_retention_loop(), name="app-retention-sweeper")
 
 
+def _enforce_daily_quota(device_fingerprint: Optional[str]) -> None:
+    quota = config.daily_build_quota_per_device()
+    if quota <= 0 or not device_fingerprint:
+        return
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    used = history_store.count_recent_builds(device_fingerprint, since_iso)
+    if used >= quota:
+        raise HTTPException(
+            status_code=429,
+            detail=f"已达每日生成上限（{used}/{quota}），24 小时后自动恢复。",
+        )
+
+
 @app.post("/api/distill")
 async def distill_app(req: DistillRequest, request: Request):
     if not await distill_rate_limiter.allow(_client_ip(request)):
         raise HTTPException(status_code=429, detail="提交太频繁，请稍后再试。")
     device_fingerprint = _device_fingerprint(request)
-    quota = config.daily_build_quota_per_device()
-    if quota > 0 and device_fingerprint:
-        since_iso = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        used = history_store.count_recent_builds(device_fingerprint, since_iso)
-        if used >= quota:
-            raise HTTPException(
-                status_code=429,
-                detail=f"已达每日生成上限（{used}/{quota}），24 小时后自动恢复。",
-            )
+    _enforce_daily_quota(device_fingerprint)
     task = await distill_queue.submit(
         {
             "url": str(req.url),
@@ -767,6 +801,122 @@ class UpdateUrlRequest(BaseModel):
     edit_token: Optional[str] = None
 
 
+# --- HTML-to-App uploads ---
+async def _read_upload_capped(file: UploadFile) -> bytes:
+    cap = config.html_upload_max_bytes()
+    data = await file.read(cap + 1)
+    if len(data) > cap:
+        raise HTTPException(
+            status_code=413,
+            detail={"code": "htmlUpload.tooLarge", "message": "Uploaded file is too large"},
+        )
+    if not data:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "htmlUpload.invalid", "message": "Uploaded file is empty"},
+        )
+    return data
+
+
+def _analyze_html_bytes(data: bytes, filename: str) -> dict:
+    """Local-only analysis of an uploaded HTML app: title, theme color and a
+    favicon preview. Stages into a throwaway temp dir; nothing persists."""
+    with tempfile.TemporaryDirectory() as tmp:
+        staged_dir = Path(tmp) / "site"
+        staged = html_site.validate_and_extract(data, filename, staged_dir)
+        meta = html_site.extract_site_meta(staged_dir)
+    icon_data_url = None
+    if meta.get("icon_png"):
+        icon_data_url = "data:image/png;base64," + base64.b64encode(meta["icon_png"]).decode("ascii")
+    return {
+        "sourceType": "html",
+        "name": meta.get("title") or "",
+        "color": meta.get("theme_color") or "",
+        "iconDataUrl": icon_data_url,
+        "fileCount": staged["file_count"],
+        "totalBytes": staged["total_bytes"],
+    }
+
+
+@app.post("/api/analyze/html")
+async def analyze_html_upload(request: Request, file: UploadFile = File(...)):
+    if not await distill_rate_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="提交太频繁，请稍后再试。")
+    data = await _read_upload_capped(file)
+    try:
+        result = await asyncio.to_thread(_analyze_html_bytes, data, file.filename)
+    except html_site.HtmlUploadError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "htmlUpload.invalid", "message": str(exc)},
+        )
+    log_event(
+        "analyze_html_done",
+        filename=str(file.filename or ""),
+        name=result.get("name"),
+        file_count=result.get("fileCount"),
+    )
+    return result
+
+
+@app.post("/api/distill/html")
+async def distill_html_app(
+    request: Request,
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    color: str = Form("#7c3aed"),
+    display: str = Form("fullscreen"),
+    orientation: str = Form("any"),
+    options: str = Form(""),
+):
+    """Build an app from uploaded HTML content (single .html or .zip bundle).
+
+    Mirrors /api/distill: same rate limits and per-device daily quota, same
+    202 + task polling contract. The content is staged under
+    ``generated/<app_id>/site/`` before the task is enqueued."""
+    if not await distill_rate_limiter.allow(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="提交太频繁，请稍后再试。")
+    device_fingerprint = _device_fingerprint(request)
+    _enforce_daily_quota(device_fingerprint)
+    try:
+        parsed_options = json.loads(options) if str(options).strip() else {}
+        if not isinstance(parsed_options, dict):
+            raise ValueError("options must be a JSON object")
+    except ValueError as exc:
+        raise HTTPException(422, "options must be a JSON object") from exc
+    data = await _read_upload_capped(file)
+    try:
+        staged = await asyncio.to_thread(html_site.stage_html_app, data, file.filename, name, APPS_DIR)
+    except html_site.HtmlUploadError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "htmlUpload.invalid", "message": str(exc)},
+        )
+    task = await distill_queue.submit(
+        {
+            "source_type": "html",
+            "app_id": staged["app_id"],
+            "content_hash": staged["content_hash"],
+            "site_index": staged["index_name"],
+            "name": staged["name"],
+            "color": color,
+            "display": display,
+            "orientation": orientation,
+            "options": parsed_options,
+            "base_url": _resolve_base_url(request),
+            "device_fingerprint": device_fingerprint,
+        }
+    )
+    log_event(
+        "distill_html_submitted",
+        task_id=task.get("task_id"),
+        app_id=task.get("app_id"),
+        filename=str(file.filename or ""),
+        client_ip=_client_ip(request),
+    )
+    return JSONResponse(task, status_code=202)
+
+
 @app.patch("/api/app/{app_id}/url")
 async def update_app_url(app_id: str, body: UpdateUrlRequest, request: Request):
     """Hot-swap the target URL of an already-installed Web Clip.
@@ -781,6 +931,11 @@ async def update_app_url(app_id: str, body: UpdateUrlRequest, request: Request):
     if not recipe_path.exists():
         raise HTTPException(404, "App not found")
     recipe = json.loads(recipe_path.read_text())
+
+    if recipe.get("source_type") == "html":
+        # HTML apps bundle their content on this server; repointing the URL
+        # would orphan the hosted site bundle.
+        raise HTTPException(409, "URL hot-swap is not supported for HTML apps; rebuild with new content instead")
 
     expected = str(recipe.get("edit_token") or "")
     supplied = str(body.edit_token or request.headers.get("x-edit-token", "") or "")
@@ -962,9 +1117,39 @@ async def recover_history(request: Request):
     return {"recovered": recovered, "history": _history_payload(request)}
 
 
+def _decode_site_files(item: dict):
+    """Decode the base64 site bundle embedded in an exported history item."""
+    raw_files = (item.get("site_files") or [])
+    files = []
+    for entry in raw_files:
+        try:
+            files.append({"name": str(entry.get("name") or ""), "data": base64.b64decode(entry.get("data") or "")})
+        except Exception:
+            return None
+    return files or None
+
+
 @app.get("/api/history/export")
 async def export_history(request: Request):
-    return history_store.export_history(_device_fingerprint(request), APPS_DIR)
+    payload = history_store.export_history(_device_fingerprint(request), APPS_DIR)
+    export_cap = config.html_export_max_bytes()
+    for item in payload.get("items") or []:
+        recipe = item.get("recipe") or {}
+        if recipe.get("source_type") != "html":
+            continue
+        site_dir = APPS_DIR / str(item.get("app_id") or "") / "site"
+        if not site_dir.is_dir():
+            item["site_files_skipped"] = True
+            continue
+        files = html_site.iter_site_files(site_dir)
+        total = sum(len(f["data"]) for f in files)
+        if total > export_cap:
+            item["site_files_skipped"] = True
+            continue
+        item["site_files"] = [
+            {"name": f["name"], "data": base64.b64encode(f["data"]).decode("ascii")} for f in files
+        ]
+    return payload
 
 
 @app.post("/api/history/import")
@@ -979,7 +1164,7 @@ async def import_history(payload: HistoryImportPayload, request: Request):
     errors = []
     for item in payload.items:
         try:
-            recipe = _import_recipe_from_payload(item)
+            recipe = _import_recipe_from_payload(item, base_url)
             app_id = recipe["id"]
             app_dir = APPS_DIR / app_id
             recipe_path = app_dir / "recipe.json"
@@ -996,6 +1181,11 @@ async def import_history(payload: HistoryImportPayload, request: Request):
                 except Exception:
                     effective_recipe = recipe
             if should_restore:
+                if recipe.get("source_type") == "html":
+                    site_files = _decode_site_files(item)
+                    if not site_files:
+                        raise ValueError("HTML app snapshot carries no site bundle (skipped at export or corrupt)")
+                    await asyncio.to_thread(html_site.restore_site_files, app_dir / "site", site_files)
                 distiller.write_app_files(app_dir, recipe, base_url=base_url)
                 effective_recipe = _load_recipe(app_id)
                 restored += 1
@@ -1164,6 +1354,29 @@ async def serve_manifest(app_id: str):
     if not manifest.exists():
         raise HTTPException(404)
     return FileResponse(manifest, media_type="application/manifest+json")
+
+
+@app.get("/a/{app_id}/site/{file_path:path}")
+@app.get("/a/{app_id}/site")
+async def serve_app_site(app_id: str, file_path: str = ""):
+    """Serve the hosted content of an HTML app.
+
+    Path traversal is contained by resolve_site_file (resolved paths must stay
+    inside ``generated/<app_id>/site``); directory requests fall back to
+    index.html. Each hit records a visit so the 30-day retention sweep keeps
+    actively-used apps alive."""
+    site_dir = APPS_DIR / app_id / "site"
+    if not site_dir.is_dir():
+        raise HTTPException(404, "Site not found")
+    path = html_site.resolve_site_file(site_dir, file_path)
+    if path is None:
+        raise HTTPException(404, "Site file not found")
+    history_store.record_visit(app_id, "site")
+    return FileResponse(
+        path,
+        media_type=html_site.mime_for(path),
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.get("/a/{app_id}/sw.js")
