@@ -1285,9 +1285,11 @@ class ApkBuilder:
             "desktop_mode": bool(
                 raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
             ),
-            "browser_runtime": "edge_custom_tab" if bool(
-                raw.get("feature-edge-mode") or raw.get("feature_edge_mode")
-            ) else "webview",
+            "browser_runtime": (
+                "twa_immersive" if bool(raw.get("feature-twa-mode") or raw.get("feature_twa_mode"))
+                else "edge_custom_tab" if bool(raw.get("feature-edge-mode") or raw.get("feature_edge_mode"))
+                else "webview"
+            ),
             # Extra ad hosts injected per-build by the server. Passed through to
             # the APK's webtoapp_config.json asset and loaded at runtime by
             # AppConfig so site-specific domains can be blocked without a

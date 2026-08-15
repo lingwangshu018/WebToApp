@@ -137,6 +137,12 @@ class Distiller:
             "feature-desktop-mode": bool(
                 raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
             ),
+            "feature-edge-mode": bool(
+                raw.get("feature-edge-mode") or raw.get("feature_edge_mode")
+            ) and not bool(raw.get("feature-twa-mode") or raw.get("feature_twa_mode")),
+            "feature-twa-mode": bool(
+                raw.get("feature-twa-mode") or raw.get("feature_twa_mode")
+            ),
         }
 
     def _feature_flag(self, raw_options, *keys, default=False):

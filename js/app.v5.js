@@ -127,6 +127,7 @@
   const immersiveFullscreenInput = document.getElementById('feature-immersive-fullscreen');
   const desktopModeInput = document.getElementById('feature-desktop-mode');
   const edgeModeInput = document.getElementById('feature-edge-mode');
+  const twaModeInput = document.getElementById('feature-twa-mode');
   const colorHex = document.getElementById('color-hex');
   const generateBtn = document.getElementById('generate-btn');
   const resultPanel = document.getElementById('result-panel');
@@ -171,11 +172,13 @@
     const options = raw && typeof raw === 'object' ? raw : {};
     const immersiveFullscreen = options['feature-immersive-fullscreen'] === true || options.feature_immersive_fullscreen === true;
     const desktopMode = options['feature-desktop-mode'] === true || options.feature_desktop_mode === true;
-    const edgeMode = options['feature-edge-mode'] === true || options.feature_edge_mode === true || options.browser_runtime === 'edge';
+    const twaMode = options['feature-twa-mode'] === true || options.feature_twa_mode === true || options.browser_runtime === 'twa_immersive';
+    const edgeMode = !twaMode && (options['feature-edge-mode'] === true || options.feature_edge_mode === true || options.browser_runtime === 'edge' || options.browser_runtime === 'edge_custom_tab');
     return {
       immersiveFullscreen,
       desktopMode,
       edgeMode,
+      twaMode,
     };
   }
 
@@ -184,6 +187,16 @@
     immersiveFullscreenInput.checked = options.immersiveFullscreen;
     desktopModeInput.checked = options.desktopMode;
     if (edgeModeInput) edgeModeInput.checked = options.edgeMode;
+    if (twaModeInput) twaModeInput.checked = options.twaMode;
+  }
+
+  if (edgeModeInput && twaModeInput) {
+    edgeModeInput.addEventListener('change', () => {
+      if (edgeModeInput.checked) twaModeInput.checked = false;
+    });
+    twaModeInput.addEventListener('change', () => {
+      if (twaModeInput.checked) edgeModeInput.checked = false;
+    });
   }
 
   function collectFeatureOptions() {
@@ -191,11 +204,13 @@
       'feature-immersive-fullscreen': immersiveFullscreenInput.checked,
       'feature-desktop-mode': desktopModeInput.checked,
       'feature-edge-mode': Boolean(edgeModeInput && edgeModeInput.checked),
+      'feature-twa-mode': Boolean(twaModeInput && twaModeInput.checked),
     });
     return {
       'feature-immersive-fullscreen': featureOptions.immersiveFullscreen,
       'feature-desktop-mode': featureOptions.desktopMode,
       'feature-edge-mode': featureOptions.edgeMode,
+      'feature-twa-mode': featureOptions.twaMode,
     };
   }
 

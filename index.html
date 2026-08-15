@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260814-html1">
   <script src="js/i18n.js?v=20260814-html1"></script>
-  <script src="js/i18n.strings.js?v=20260815-edge2"></script>
+  <script src="js/i18n.strings.js?v=20260815-runtime2"></script>
 </head>
 <body>
   <canvas id="bg"></canvas>
@@ -177,10 +177,24 @@
                       <strong data-i18n="config.edgeTitle">Microsoft Edge shared session</strong>
                       <span class="feature-tag">Android</span>
                     </div>
-                    <p data-i18n="config.edgeDesc">Open the site in an Edge Custom Tab so Edge cookies and browser-bound login state are reused. The toolbar can collapse while scrolling; true zero-UI fullscreen still requires a verified TWA site.</p>
+                    <p data-i18n="config.edgeDesc">Open the site in an Edge Custom Tab so Edge cookies and browser-bound login state are reused. The toolbar can collapse while scrolling.</p>
                   </div>
-                  <label class="switch" data-i18n-aria-label="config.edgeTitle" aria-label="Microsoft Edge mode">
+                  <label class="switch" data-i18n-aria-label="config.edgeTitle" aria-label="Microsoft Edge shared session">
                     <input id="feature-edge-mode" type="checkbox">
+                    <span class="switch-ui"></span>
+                  </label>
+                </section>
+
+                <section class="feature-card">
+                  <div class="feature-copy">
+                    <div class="feature-heading-row">
+                      <strong data-i18n="config.twaTitle">TWA immersive fullscreen</strong>
+                      <span class="feature-tag">Android</span>
+                    </div>
+                    <p data-i18n="config.twaDesc">Build this site as a verified Trusted Web Activity with sticky immersive fullscreen. The site must publish the generated Digital Asset Links file; otherwise the browser falls back to a Custom Tab.</p>
+                  </div>
+                  <label class="switch" data-i18n-aria-label="config.twaTitle" aria-label="TWA immersive fullscreen">
+                    <input id="feature-twa-mode" type="checkbox">
                     <span class="switch-ui"></span>
                   </label>
                 </section>
@@ -288,6 +302,6 @@
 
   </main>
 
-  <script src="js/app.v5.js?v=20260815-edge1"></script>
+  <script src="js/app.v5.js?v=20260815-runtime2"></script>
 </body>
 </html>
