@@ -152,7 +152,9 @@ public class M extends Activity {
         super.onCreate(b);
         getWindow().requestFeature(android.view.Window.FEATURE_NO_TITLE);
         config = loadConfig();
-        if (config != null && "edge".equals(config.browserRuntime) && launchPreferredBrowser(config.url)) {
+        if (config != null
+                && ("edge".equals(config.browserRuntime) || "edge_custom_tab".equals(config.browserRuntime))
+                && launchEdgeSharedSession(config.url)) {
             finish();
             return;
         }
@@ -245,9 +247,32 @@ public class M extends Activity {
         applyImmersiveMode();
     }
 
-    private boolean launchPreferredBrowser(String url) {
+    private boolean launchEdgeSharedSession(String url) {
         if (url == null || url.trim().isEmpty()) return false;
         String target = url.trim();
+
+        // Prefer a Microsoft Edge Custom Tab. Custom Tabs are browser-owned,
+        // so the page reuses the Edge profile's cookies/session state instead
+        // of creating a separate android.webkit.WebView identity. Asking the
+        // browser to hide the URL bar allows the toolbar to collapse on scroll.
+        try {
+            Intent customTab = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+            customTab.addCategory(Intent.CATEGORY_BROWSABLE);
+            customTab.setPackage("com.microsoft.emmx");
+            android.os.Bundle extras = new android.os.Bundle();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                extras.putBinder("android.support.customtabs.extra.SESSION", null);
+            }
+            customTab.putExtras(extras);
+            customTab.putExtra("android.support.customtabs.extra.ENABLE_URLBAR_HIDING", true);
+            customTab.putExtra("android.support.customtabs.extra.EXTRA_ENABLE_INSTANT_APPS", true);
+            customTab.putExtra("android.support.customtabs.extra.SHARE_MENU_ITEM", false);
+            startActivity(customTab);
+            return true;
+        } catch (Throwable ignored) {}
+
+        // Edge may be installed but reject/disable Custom Tabs on a device.
+        // Fall back to a normal Edge tab before giving Android another browser.
         try {
             Intent edge = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
             edge.addCategory(Intent.CATEGORY_BROWSABLE);
@@ -255,6 +280,7 @@ public class M extends Activity {
             startActivity(edge);
             return true;
         } catch (Throwable ignored) {}
+
         try {
             Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
             fallback.addCategory(Intent.CATEGORY_BROWSABLE);
@@ -678,7 +704,7 @@ class ApkBuilder:
     TEMPLATE_APP_NAME = "WebToApp Template"
     TEMPLATE_VERSION_CODE = 1
     TEMPLATE_VERSION_NAME = "1.0"
-    TEMPLATE_REVISION = "2026-08-15-edge-runtime-1"
+    TEMPLATE_REVISION = "2026-08-15-edge-shared-session-2"
     # Keystore used only to sign the throwaway base *template* APK. The template
     # is always re-signed per-app afterwards, so this key never reaches users.
     TEMPLATE_KEY_ALIAS = "webtoapp"
@@ -1259,7 +1285,7 @@ class ApkBuilder:
             "desktop_mode": bool(
                 raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
             ),
-            "browser_runtime": "edge" if bool(
+            "browser_runtime": "edge_custom_tab" if bool(
                 raw.get("feature-edge-mode") or raw.get("feature_edge_mode")
             ) else "webview",
             # Extra ad hosts injected per-build by the server. Passed through to
