@@ -48,6 +48,30 @@ jobs:
       - name: Install Android + Bubblewrap tooling
         run: sudo -E bash server/scripts/install_android_sdk.sh
 
+      - name: Preseed Bubblewrap config
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          home = Path.home()
+          config_dir = home / '.bubblewrap'
+          config_dir.mkdir(parents=True, exist_ok=True)
+          payload = {
+              'jdkPath': os.environ['JAVA_HOME'],
+              'androidSdkPath': os.environ['ANDROID_HOME'],
+          }
+          path = config_dir / 'config.json'
+          path.write_text(json.dumps(payload), encoding='utf-8')
+          print('Wrote Bubblewrap config:', path)
+          print(path.read_text(encoding='utf-8'))
+          PY
+
       - name: Build immersive TWA APK
         env:
           TWA_URL: ${{ inputs.url }}
@@ -58,7 +82,9 @@ jobs:
         run: |
           mkdir -p out
           echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
           echo "bubblewrap=$(command -v bubblewrap || true)"
+          cat "$HOME/.bubblewrap/config.json"
           test -f "$ANDROID_HOME/platforms/android-34/android.jar"
           python - <<'PY'
           import os
