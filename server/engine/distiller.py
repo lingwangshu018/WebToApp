@@ -624,6 +624,11 @@ class Distiller:
             ("Windows", "windows", f"{base}/download/windows", "platWinDetail", "actionDownload", ""),
             ("Linux", "linux", f"{base}/download/linux", "platLinuxDetail", "actionDownload", ""),
         ]
+        if (app_dir / "downloads" / "assetlinks.json").exists():
+            platform_rows.insert(
+                2,
+                ("TWA assetlinks.json", "android", f"{base}/download/assetlinks", "platTwaAssetlinksDetail", "actionDownload", ""),
+            )
         platform_icons = {
             "windows": (
                 '<svg viewBox="0 0 88 88" aria-hidden="true">'
@@ -898,6 +903,7 @@ a{{color:inherit;text-decoration:none}}
                 "platAndroidDetail": ".apk / .zip \u00b7 install directly or unzip",
                 "platAndroidApkDetail": ".apk \u00b7 signed WebView installer",
                 "platAndroidZipDetail": ".zip \u00b7 lightweight PWA package",
+                "platTwaAssetlinksDetail": "Deploy this file as /.well-known/assetlinks.json on the wrapped site to verify fullscreen TWA ownership",
                 "androidBadgeApk": "Signed APK",
                 "androidBadgeZip": "PWA package",
                 "platMacDetail": ".zip \u00b7 native .app icon \u00b7 drag to Applications",
@@ -932,6 +938,7 @@ a{{color:inherit;text-decoration:none}}
                 "platAndroidDetail": ".apk / .zip · 直接安装或解压使用",
                 "platAndroidApkDetail": ".apk · 已签名 WebView 安装包",
                 "platAndroidZipDetail": ".zip · 轻量 PWA 包",
+                "platTwaAssetlinksDetail": "把此文件部署到目标站点的 /.well-known/assetlinks.json，用于验证 TWA 全屏权限",
                 "androidBadgeApk": "已签名 APK",
                 "androidBadgeZip": "PWA 包",
                 "platMacDetail": ".zip · 原生 .app 图标 · 拖入应用文件夹",

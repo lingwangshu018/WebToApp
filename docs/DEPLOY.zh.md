@@ -214,6 +214,24 @@ python -m server.scripts.rebuild_android_apks --app-id abcd1234
 
 **没有 SDK 时**，跳过 APK 生成，安卓用户改为获得可安装的 PWA 包——其余功能照常工作。
 
+### Android 运行模式
+
+生成器现在可以为每个应用单独选择 Android 运行方式：
+
+- **System WebView**：默认模式，继续使用系统 `android.webkit.WebView`。
+- **Microsoft Edge shared session**：通过 Edge Custom Tab 打开，优先复用 Edge 的 Cookie / 登录状态。
+- **TWA immersive fullscreen**：使用 Bubblewrap 生成真正的 Trusted Web Activity，并请求 `fullscreen-sticky` 沉浸模式。
+
+TWA 模式额外需要 **Node.js + npm**。再次运行 `server/scripts/install_android_sdk.sh` 时，如果系统存在 `npm`，脚本会把固定版本的 Bubblewrap 安装到 WebToApp 自己的 `_android_tools` 目录；`/api/metrics` 中的 `features.android_twa` 可用来确认服务器是否具备真实 TWA 构建能力。
+
+TWA 构建成功后，下载目录会多出 `assetlinks.json`，下载页也会显示它。把这个文件部署到目标站点的：
+
+```text
+/.well-known/assetlinks.json
+```
+
+文件中的包名和 SHA-256 证书指纹由 WebToApp 按当前应用的稳定签名自动生成。站点未完成 Digital Asset Links 验证时，浏览器会按 TWA 机制退回带浏览器 UI 的 Custom Tab；因此不要把“APK 已生成”误认为“站点已验证”。
+
 ## 10. iOS 描述文件签名（可选）
 
 默认情况下 iOS 的 `.mobileconfig` 是未签名的（iOS 仍可安装，只是显示"未验证"）。要让 iOS 显示你的域名为来源，通过 `IOS_CERT_FILE` / `IOS_KEY_FILE` / `IOS_CHAIN_FILE` 提供公开 CA 证书，或放入 `certs/ios-cert.pem`、`certs/ios-key.pem`、`certs/ios-chain.pem`。签名使用系统 `openssl`。详见 [`certs/README.md`](../certs/README.md)。

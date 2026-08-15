@@ -1268,6 +1268,7 @@ DOWNLOAD_TYPES = {
     "android": ("android.apk", "application/vnd.android.package-archive"),
     "android_fallback": ("android.zip", "application/zip"),
     "ios": ("ios.mobileconfig", "application/x-apple-aspen-config"),
+    "assetlinks": ("assetlinks.json", "application/json"),
 }
 
 
