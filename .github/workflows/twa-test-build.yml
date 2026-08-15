@@ -53,10 +53,13 @@ jobs:
           TWA_URL: ${{ inputs.url }}
           TWA_NAME: ${{ inputs.app_name }}
           TWA_PACKAGE: ${{ inputs.package_name }}
-          ANDROID_HOME: /opt/android-sdk
-          ANDROID_SDK_ROOT: /opt/android-sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
           mkdir -p out
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "bubblewrap=$(command -v bubblewrap || true)"
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
           python - <<'PY'
           import os
           from pathlib import Path
