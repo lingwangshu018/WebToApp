@@ -1,0 +1,1 @@
+Always pair android.apk with assetlinks.json from the same workflow run.
