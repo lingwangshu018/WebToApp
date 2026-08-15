@@ -180,7 +180,8 @@ class TwaBuilder:
                     alias=alias,
                     icon_url=icon_url,
                 )
-                (work / "twa-manifest.json").write_text(
+                manifest_path = work / "twa-manifest.json"
+                manifest_path.write_text(
                     json.dumps(manifest, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
@@ -194,7 +195,7 @@ class TwaBuilder:
                     env["ANDROID_SDK_ROOT"] = self.apk_builder.sdk
 
                 subprocess.run(
-                    command + ["update", "--skipVersionUpgrade", f"--manifest={work}"],
+                    command + ["update", "--skipVersionUpgrade", f"--manifest={manifest_path}"],
                     cwd=work,
                     env=env,
                     check=True,
@@ -205,7 +206,7 @@ class TwaBuilder:
                     command + [
                         "build",
                         "--skipPwaValidation",
-                        f"--manifest={work}",
+                        f"--manifest={manifest_path}",
                         f"--signingKeyPath={keystore}",
                         f"--signingKeyAlias={alias}",
                     ],
@@ -234,6 +235,15 @@ class TwaBuilder:
                 "package_name": pkg,
                 "sha256_cert_fingerprint": fingerprint,
             }
+        except subprocess.CalledProcessError as exc:
+            stdout = (exc.stdout or "").strip()
+            stderr = (exc.stderr or "").strip()
+            print(f"[TwaBuilder] command failed: {exc}")
+            if stdout:
+                print(f"[TwaBuilder] stdout:\n{stdout}")
+            if stderr:
+                print(f"[TwaBuilder] stderr:\n{stderr}")
+            return None
         except Exception as exc:
             print(f"[TwaBuilder] build failed: {exc}")
             return None
