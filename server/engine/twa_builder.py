@@ -1,6 +1,6 @@
 """Trusted Web Activity builder used by the optional Android TWA runtime.
 
-The normal WebToApp Android path is a tiny android.webkit.WebView shell.  TWA
+The normal WebToApp Android path is a tiny android.webkit.WebView shell. TWA
 mode is deliberately kept separate: it uses Google's Bubblewrap CLI to build a
 real Trusted Web Activity and reuses WebToApp's per-app signing key so Digital
 Asset Links stay stable across rebuilds.
@@ -65,6 +65,38 @@ class TwaBuilder:
     def _launcher_name(name: str) -> str:
         value = str(name or "App").strip() or "App"
         return value[:12]
+
+    @staticmethod
+    def _jdk_path() -> str | None:
+        configured = str(os.environ.get("JAVA_HOME") or "").strip()
+        if configured:
+            return configured
+        java = shutil.which("java")
+        if not java:
+            return None
+        # .../jdk/bin/java -> .../jdk
+        try:
+            return str(Path(java).resolve().parents[1])
+        except (OSError, IndexError):
+            return None
+
+    def _configure_bubblewrap(self, command, env):
+        """Tell Bubblewrap to use the already-installed JDK/SDK without prompts."""
+        jdk_path = self._jdk_path()
+        android_sdk = str(self.apk_builder.sdk or "").strip()
+        if not jdk_path or not android_sdk:
+            raise RuntimeError("Bubblewrap requires configured JDK and Android SDK paths")
+        subprocess.run(
+            command + [
+                "updateConfig",
+                f"--jdkPath={jdk_path}",
+                f"--androidSdkPath={android_sdk}",
+            ],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def _manifest(self, *, url, name, pkg, color, version_code, version_name,
                   keystore, alias, icon_url):
@@ -147,7 +179,7 @@ class TwaBuilder:
         """Build a real TWA APK.
 
         Returns metadata on success and ``None`` when Bubblewrap/Android tools
-        are unavailable or the build fails.  A caller can then fall back to a
+        are unavailable or the build fails. A caller can then fall back to a
         different runtime without pretending the result is a TWA.
         """
         if not self.can_build:
@@ -193,6 +225,12 @@ class TwaBuilder:
                 if self.apk_builder.sdk:
                     env["ANDROID_HOME"] = self.apk_builder.sdk
                     env["ANDROID_SDK_ROOT"] = self.apk_builder.sdk
+
+                # Bubblewrap's first run is interactive unless its own config
+                # knows where the existing JDK and Android SDK live. Configure
+                # both before update/build so CI and headless servers never
+                # stop at the "install JDK?" / "install Android SDK?" prompts.
+                self._configure_bubblewrap(command, env)
 
                 subprocess.run(
                     command + ["update", "--skipVersionUpgrade", f"--manifest={manifest_path}"],
