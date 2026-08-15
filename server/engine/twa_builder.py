@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from server.engine.apk_builder import ApkBuilder
+from server.engine.assetlinks_registry import is_hosted_site_url, rebuild_registry
 
 
 class TwaBuilder:
@@ -260,16 +261,24 @@ class TwaBuilder:
                     raise RuntimeError("Bubblewrap did not produce app-release-signed.apk")
                 shutil.copy2(signed, output)
 
-            assetlinks_output.write_text(
-                self.assetlinks_json(pkg, fingerprint),
-                encoding="utf-8",
-            )
+            assetlinks_text = self.assetlinks_json(pkg, fingerprint)
+            assetlinks_output.write_text(assetlinks_text, encoding="utf-8")
+
+            # Uploaded HTML apps live on this WebToApp origin under
+            # /a/<id>/site/. Publish their association at the origin root so
+            # Android can verify the TWA automatically. External target sites
+            # keep the downloadable per-app file and remain owner-managed.
+            if is_hosted_site_url(url, app_id):
+                payload = json.loads(assetlinks_text)
+                rebuild_registry(payload[0] if payload else None)
+
             return {
                 "apk": True,
                 "fallback": False,
                 "runtime": "twa_immersive",
                 "twa_verified_origin": self._origin(url),
                 "assetlinks_file": assetlinks_output.name,
+                "assetlinks_auto_published": bool(is_hosted_site_url(url, app_id)),
                 "package_name": pkg,
                 "sha256_cert_fingerprint": fingerprint,
             }
