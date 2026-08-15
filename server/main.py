@@ -1029,11 +1029,17 @@ async def readyz():
 @app.get("/api/metrics")
 async def metrics():
     apk_builder_ready = False
+    twa_builder_ready = False
     try:
         from server.engine.apk_builder import ApkBuilder
         apk_builder_ready = bool(ApkBuilder().can_build_apk)
     except Exception:
         apk_builder_ready = False
+    try:
+        from server.engine.twa_builder import TwaBuilder
+        twa_builder_ready = bool(TwaBuilder().can_build)
+    except Exception:
+        twa_builder_ready = False
     return {
         "distill": {
             "workers": DISTILL_WORKER_COUNT,
@@ -1053,6 +1059,7 @@ async def metrics():
         "features": {
             "ios_signing": mobileconfig_signer.can_sign(),
             "android_apk": apk_builder_ready,
+            "android_twa": twa_builder_ready,
             "r2": r2_storage.configured,
         },
         "build_parallelism": config.build_parallelism(),
@@ -1261,6 +1268,7 @@ DOWNLOAD_TYPES = {
     "android": ("android.apk", "application/vnd.android.package-archive"),
     "android_fallback": ("android.zip", "application/zip"),
     "ios": ("ios.mobileconfig", "application/x-apple-aspen-config"),
+    "assetlinks": ("assetlinks.json", "application/json"),
 }
 
 
