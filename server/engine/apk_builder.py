@@ -152,6 +152,10 @@ public class M extends Activity {
         super.onCreate(b);
         getWindow().requestFeature(android.view.Window.FEATURE_NO_TITLE);
         config = loadConfig();
+        if (config != null && "edge".equals(config.browserRuntime) && launchPreferredBrowser(config.url)) {
+            finish();
+            return;
+        }
         webView = new WebView(this);
         applyImmersiveMode();
         webView.setWebViewClient(new WebViewClient() {
@@ -241,6 +245,26 @@ public class M extends Activity {
         applyImmersiveMode();
     }
 
+    private boolean launchPreferredBrowser(String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        String target = url.trim();
+        try {
+            Intent edge = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+            edge.addCategory(Intent.CATEGORY_BROWSABLE);
+            edge.setPackage("com.microsoft.emmx");
+            startActivity(edge);
+            return true;
+        } catch (Throwable ignored) {}
+        try {
+            Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+            fallback.addCategory(Intent.CATEGORY_BROWSABLE);
+            fallback.setComponent(null);
+            startActivity(fallback);
+            return true;
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
     private String sanitizeUserAgent(String ua) {
         return ua.replace("; wv", "").replace(" Version/4.0", "");
     }
@@ -309,6 +333,7 @@ public class M extends Activity {
             loaded.url = json.optString("url", "about:blank").trim();
             loaded.immersiveFullscreen = json.optBoolean("immersive_fullscreen", false);
             loaded.desktopMode = json.optBoolean("desktop_mode", false);
+            loaded.browserRuntime = json.optString("browser_runtime", "webview").trim().toLowerCase(Locale.US);
             // Load any extra ad hosts supplied by the server at build time
             JSONArray extraHosts = json.optJSONArray("extra_ad_hosts");
             if (extraHosts != null) {
@@ -616,6 +641,7 @@ public class M extends Activity {
         String url = "about:blank";
         boolean immersiveFullscreen = false;
         boolean desktopMode = false;
+        String browserRuntime = "webview";
         // Extra ad hosts injected at build time via webtoapp_config.json.
         // Allows blocking site-specific ad domains without rebuilding the APK template.
         Set<String> extraAdHosts = new HashSet<>();
@@ -652,7 +678,7 @@ class ApkBuilder:
     TEMPLATE_APP_NAME = "WebToApp Template"
     TEMPLATE_VERSION_CODE = 1
     TEMPLATE_VERSION_NAME = "1.0"
-    TEMPLATE_REVISION = "2026-06-03-adblock-1"
+    TEMPLATE_REVISION = "2026-08-15-edge-runtime-1"
     # Keystore used only to sign the throwaway base *template* APK. The template
     # is always re-signed per-app afterwards, so this key never reaches users.
     TEMPLATE_KEY_ALIAS = "webtoapp"
@@ -1233,6 +1259,9 @@ class ApkBuilder:
             "desktop_mode": bool(
                 raw.get("feature-desktop-mode") or raw.get("feature_desktop_mode")
             ),
+            "browser_runtime": "edge" if bool(
+                raw.get("feature-edge-mode") or raw.get("feature_edge_mode")
+            ) else "webview",
             # Extra ad hosts injected per-build by the server. Passed through to
             # the APK's webtoapp_config.json asset and loaded at runtime by
             # AppConfig so site-specific domains can be blocked without a

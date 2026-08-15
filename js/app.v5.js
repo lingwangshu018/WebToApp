@@ -126,6 +126,7 @@
   const androidPackagePrefixInput = document.getElementById('android-package-prefix');
   const immersiveFullscreenInput = document.getElementById('feature-immersive-fullscreen');
   const desktopModeInput = document.getElementById('feature-desktop-mode');
+  const edgeModeInput = document.getElementById('feature-edge-mode');
   const colorHex = document.getElementById('color-hex');
   const generateBtn = document.getElementById('generate-btn');
   const resultPanel = document.getElementById('result-panel');
@@ -170,9 +171,11 @@
     const options = raw && typeof raw === 'object' ? raw : {};
     const immersiveFullscreen = options['feature-immersive-fullscreen'] === true || options.feature_immersive_fullscreen === true;
     const desktopMode = options['feature-desktop-mode'] === true || options.feature_desktop_mode === true;
+    const edgeMode = options['feature-edge-mode'] === true || options.feature_edge_mode === true || options.browser_runtime === 'edge';
     return {
       immersiveFullscreen,
       desktopMode,
+      edgeMode,
     };
   }
 
@@ -180,16 +183,19 @@
     const options = normalizeFeatureOptions(raw);
     immersiveFullscreenInput.checked = options.immersiveFullscreen;
     desktopModeInput.checked = options.desktopMode;
+    if (edgeModeInput) edgeModeInput.checked = options.edgeMode;
   }
 
   function collectFeatureOptions() {
     const featureOptions = normalizeFeatureOptions({
       'feature-immersive-fullscreen': immersiveFullscreenInput.checked,
       'feature-desktop-mode': desktopModeInput.checked,
+      'feature-edge-mode': Boolean(edgeModeInput && edgeModeInput.checked),
     });
     return {
       'feature-immersive-fullscreen': featureOptions.immersiveFullscreen,
       'feature-desktop-mode': featureOptions.desktopMode,
+      'feature-edge-mode': featureOptions.edgeMode,
     };
   }
 

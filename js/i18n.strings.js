@@ -96,6 +96,8 @@
     'config.immersiveDesc': 'Hide the Android status and navigation bars so content fills the screen. iPhone apps already launch fullscreen by default.',
     'config.desktopTitle': 'Desktop mode',
     'config.desktopDesc': 'Visit the site with a desktop browser identity. Good for dashboards, consoles and some video pages.',
+    'config.edgeTitle': 'Microsoft Edge mode',
+    'config.edgeDesc': 'Open the generated Android app in Microsoft Edge instead of Android System WebView. If Edge is unavailable, Android falls back to another browser; if that also fails, the embedded WebView is used.',
     'config.advancedTitle': 'Advanced settings',
     'config.advancedSub': 'Android version and package name',
     'config.versionName': 'Android version name',

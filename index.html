@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css?v=20260814-html1">
   <script src="js/i18n.js?v=20260814-html1"></script>
-  <script src="js/i18n.strings.js?v=20260814-html1"></script>
+  <script src="js/i18n.strings.js?v=20260815-edge1"></script>
 </head>
 <body>
   <canvas id="bg"></canvas>
@@ -170,6 +170,20 @@
                     <span class="switch-ui"></span>
                   </label>
                 </section>
+
+                <section class="feature-card">
+                  <div class="feature-copy">
+                    <div class="feature-heading-row">
+                      <strong data-i18n="config.edgeTitle">Microsoft Edge mode</strong>
+                      <span class="feature-tag">Android</span>
+                    </div>
+                    <p data-i18n="config.edgeDesc">Open the generated Android app's target URL in Microsoft Edge. This uses the real Edge app instead of Android System WebView.</p>
+                  </div>
+                  <label class="switch" data-i18n-aria-label="config.edgeTitle" aria-label="Microsoft Edge mode">
+                    <input id="feature-edge-mode" type="checkbox">
+                    <span class="switch-ui"></span>
+                  </label>
+                </section>
               </div>
             </details>
 
@@ -274,6 +288,6 @@
 
   </main>
 
-  <script src="js/app.v5.js?v=20260814-html1"></script>
+  <script src="js/app.v5.js?v=20260815-edge1"></script>
 </body>
 </html>
