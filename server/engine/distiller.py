@@ -20,6 +20,7 @@ from urllib.parse import urlparse, urljoin
 from PIL import Image, ImageOps, UnidentifiedImageError
 from server import config
 from server.engine.apk_builder import ApkBuilder
+from server.engine.twa_builder import TwaBuilder
 from server.engine import mobileconfig_signer
 from server.engine.cache import html_cache, icon_cache
 from server.engine.storage import r2_storage
@@ -204,7 +205,7 @@ class Distiller:
             return "ios", meta
 
         def build_android():
-            meta = self._build_android(dl, recipe, icon_png, direct_url)
+            meta = self._build_android(dl, recipe, icon_png, direct_url, base_url=base_url)
             return "android", meta
 
         builders = {
@@ -1579,30 +1580,82 @@ echo "✓ {n} 已安装到应用菜单"
         }
 
     # ===== Android — APK or PWA package =====
-    def _build_android(self, dl: Path, r: dict, icon_png, shell_url: str):
-        builder = ApkBuilder()
+    def _build_android(self, dl: Path, r: dict, icon_png, shell_url: str, base_url: Optional[str] = None):
+        options = dict(r.get("options") or {})
         prefix = r.get("android_package_prefix") or config.android_package_prefix()
         pkg = f"{prefix}.a{r['id']}"
         apk_path = dl / "android.apk"
         zip_path = dl / "android.zip"
 
-        if builder.build_apk(
-            str(apk_path),
-            shell_url,
-            r['name'],
-            pkg,
-            icon_png,
-            version_code=r.get("android_version_code", 1),
-            version_name=r.get("android_version_name", "1.0"),
-            feature_options=r.get("options") or {},
-            app_id=r['id'],
-        ):
-            if zip_path.exists():
-                zip_path.unlink()
-            return {"apk": True, "fallback": False}
+        if options.get("feature-twa-mode"):
+            icon_url = None
+            if base_url and icon_png:
+                icon_url = f"{str(base_url).rstrip('/')}/a/{r['id']}/icon.png"
+            twa = TwaBuilder()
+            twa_meta = twa.build(
+                str(apk_path),
+                url=shell_url,
+                name=r['name'],
+                pkg=pkg,
+                color=r.get('color') or '#000000',
+                version_code=r.get("android_version_code", 1),
+                version_name=r.get("android_version_name", "1.0"),
+                app_id=r['id'],
+                icon_url=icon_url,
+                assetlinks_output=dl / "assetlinks.json",
+            )
+            if twa_meta:
+                if zip_path.exists():
+                    zip_path.unlink()
+                return twa_meta
 
+            # TWA tooling may be unavailable on a lightweight deployment. Do not
+            # silently pretend a WebView is a TWA: produce the safest browser-
+            # identity-preserving fallback, an Edge shared-session APK, and mark
+            # that fallback explicitly in recipe metadata.
+            options["feature-twa-mode"] = False
+            options["feature-edge-mode"] = True
+            builder = ApkBuilder()
+            if builder.build_apk(
+                str(apk_path), shell_url, r['name'], pkg, icon_png,
+                version_code=r.get("android_version_code", 1),
+                version_name=r.get("android_version_name", "1.0"),
+                feature_options=options,
+                app_id=r['id'],
+            ):
+                if zip_path.exists():
+                    zip_path.unlink()
+                return {
+                    "apk": True,
+                    "fallback": True,
+                    "runtime": "edge_custom_tab",
+                    "requested_runtime": "twa_immersive",
+                    "fallback_reason": "twa_builder_unavailable_or_failed",
+                }
+        else:
+            builder = ApkBuilder()
+            if builder.build_apk(
+                str(apk_path),
+                shell_url,
+                r['name'],
+                pkg,
+                icon_png,
+                version_code=r.get("android_version_code", 1),
+                version_name=r.get("android_version_name", "1.0"),
+                feature_options=options,
+                app_id=r['id'],
+            ):
+                if zip_path.exists():
+                    zip_path.unlink()
+                return {
+                    "apk": True,
+                    "fallback": False,
+                    "runtime": "edge_custom_tab" if options.get("feature-edge-mode") else "webview",
+                }
+
+        builder = ApkBuilder()
         builder.build_fallback(str(zip_path), shell_url, r['name'], icon_png, r['color'])
-        return {"apk": False, "fallback": True}
+        return {"apk": False, "fallback": True, "runtime": "pwa_package"}
 
     def _normalized_display_mode(self, display):
         raw = str(display or "").strip().lower()

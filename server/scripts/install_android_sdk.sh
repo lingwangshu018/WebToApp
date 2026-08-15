@@ -5,6 +5,7 @@ SDK_ROOT="${ANDROID_HOME:-/opt/android-sdk}"
 BUILD_TOOLS_VERSION="${ANDROID_BUILD_TOOLS_VERSION:-34.0.0}"
 PLATFORM_VERSION="${ANDROID_PLATFORM_VERSION:-android-34}"
 APKTOOL_VERSION="${APKTOOL_VERSION:-2.11.1}"
+BUBBLEWRAP_VERSION="${BUBBLEWRAP_VERSION:-1.24.1}"
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOLS_DIR="$ROOT_DIR/server/engine/_android_tools"
 CMDTOOLS_URL="${CMDTOOLS_URL:-https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip}"
@@ -22,6 +23,14 @@ need_cmd unzip
 need_cmd java
 need_cmd javac
 need_cmd keytool
+
+# TWA mode additionally needs Node/npm. Keep ordinary WebView APK builds usable
+# when Node is absent; the server will report android_twa=false and gracefully
+# fall back to Edge shared-session mode for TWA requests.
+HAS_NPM=0
+if command -v npm >/dev/null 2>&1; then
+  HAS_NPM=1
+fi
 
 mkdir -p "$SDK_ROOT/cmdline-tools" "$TOOLS_DIR"
 
@@ -58,6 +67,19 @@ exec java -jar "$TOOLS_DIR/apktool.jar" "\$@"
 EOF2
 chmod +x /usr/local/bin/apktool
 
+if [ "$HAS_NPM" = "1" ]; then
+  BUBBLEWRAP_DIR="$TOOLS_DIR/bubblewrap"
+  mkdir -p "$BUBBLEWRAP_DIR"
+  if [ ! -x "$BUBBLEWRAP_DIR/node_modules/.bin/bubblewrap" ]; then
+    npm install --prefix "$BUBBLEWRAP_DIR" "@bubblewrap/cli@${BUBBLEWRAP_VERSION}"
+  fi
+  cat > /usr/local/bin/bubblewrap << EOF3
+#!/bin/sh
+exec "$BUBBLEWRAP_DIR/node_modules/.bin/bubblewrap" "\$@"
+EOF3
+  chmod +x /usr/local/bin/bubblewrap
+fi
+
 export PATH="$SDK_ROOT/build-tools/${BUILD_TOOLS_VERSION}:$SDK_ROOT/platform-tools:/usr/local/bin:$PATH"
 
 echo "ANDROID_HOME=$SDK_ROOT"
@@ -67,4 +89,5 @@ echo "apksigner=$(command -v apksigner)"
 echo "zipalign=$(command -v zipalign)"
 echo "android.jar=$SDK_ROOT/platforms/${PLATFORM_VERSION}/android.jar"
 echo "apktool=$(apktool --version 2>/dev/null || true)"
+echo "bubblewrap=$(command -v bubblewrap 2>/dev/null || echo unavailable)"
 echo "done"
