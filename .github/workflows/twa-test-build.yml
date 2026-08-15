@@ -1,0 +1,104 @@
+name: TWA Test Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: HTTPS site URL to wrap
+        required: true
+        default: https://sakunousagie-24425-public.pages.dev
+        type: string
+      app_name:
+        description: App name
+        required: true
+        default: Sakunousagie
+        type: string
+      package_name:
+        description: Android package name
+        required: true
+        default: com.webtoapp.sakunousagie24425
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Python dependencies
+        run: python -m pip install -r server/requirements.txt
+
+      - name: Install Android + Bubblewrap tooling
+        run: sudo -E bash server/scripts/install_android_sdk.sh
+
+      - name: Build immersive TWA APK
+        env:
+          TWA_URL: ${{ inputs.url }}
+          TWA_NAME: ${{ inputs.app_name }}
+          TWA_PACKAGE: ${{ inputs.package_name }}
+          ANDROID_HOME: /opt/android-sdk
+          ANDROID_SDK_ROOT: /opt/android-sdk
+        run: |
+          mkdir -p out
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from server.engine.twa_builder import TwaBuilder
+
+          url = os.environ['TWA_URL'].strip()
+          name = os.environ['TWA_NAME'].strip()
+          pkg = os.environ['TWA_PACKAGE'].strip()
+          out = Path('out')
+          apk = out / 'android.apk'
+          assetlinks = out / 'assetlinks.json'
+
+          builder = TwaBuilder()
+          print('TWA builder available:', builder.can_build)
+          if not builder.can_build:
+              raise SystemExit('TWA toolchain is unavailable on this runner')
+
+          result = builder.build(
+              apk,
+              url=url,
+              name=name,
+              pkg=pkg,
+              color='#000000',
+              version_code=1,
+              version_name='1.0.0',
+              app_id='twa-test-sakunousagie',
+              icon_url=url.rstrip('/') + '/favicon.ico',
+              assetlinks_output=assetlinks,
+          )
+          if not result or not apk.exists() or not assetlinks.exists():
+              raise SystemExit('TWA build failed')
+          print(result)
+          PY
+
+      - name: Show generated Digital Asset Links
+        run: cat out/assetlinks.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: twa-test-${{ github.run_number }}
+          path: |
+            out/android.apk
+            out/assetlinks.json
+          if-no-files-found: error
+          retention-days: 7
