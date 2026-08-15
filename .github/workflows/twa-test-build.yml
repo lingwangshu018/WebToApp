@@ -103,6 +103,12 @@ jobs:
           if not builder.can_build:
               raise SystemExit('TWA toolchain is unavailable on this runner')
 
+          # The current test site does not expose a real /favicon.ico (it returns
+          # HTML), and Bubblewrap rejects non-image Content-Type values. Use a
+          # known image URL for this smoke build so we can validate the TWA
+          # packaging path independently of the site's favicon setup.
+          icon_url = 'https://github.com/lingwangshu018.png?size=512'
+
           result = builder.build(
               apk,
               url=url,
@@ -112,7 +118,7 @@ jobs:
               version_code=1,
               version_name='1.0.0',
               app_id='twa-test-sakunousagie',
-              icon_url=url.rstrip('/') + '/favicon.ico',
+              icon_url=icon_url,
               assetlinks_output=assetlinks,
           )
           if not result or not apk.exists() or not assetlinks.exists():
