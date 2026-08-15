@@ -42,8 +42,8 @@ replace_once(
 # Add fallback translations for the verification file shown only on TWA builds.
 replace_once(
     'server/engine/distiller.py',
-    '                "platAndroidZipDetail": ".zip · lightweight PWA package",\n',
-    '                "platAndroidZipDetail": ".zip · lightweight PWA package",\n                "platTwaAssetlinksDetail": "Deploy this file as /.well-known/assetlinks.json on the wrapped site to verify fullscreen TWA ownership",\n',
+    '                "platAndroidZipDetail": ".zip \\u00b7 lightweight PWA package",\n',
+    '                "platAndroidZipDetail": ".zip \\u00b7 lightweight PWA package",\n                "platTwaAssetlinksDetail": "Deploy this file as /.well-known/assetlinks.json on the wrapped site to verify fullscreen TWA ownership",\n',
 )
 replace_once(
     'server/engine/distiller.py',
